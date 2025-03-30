@@ -17,7 +17,6 @@ export default function AddressTagging({ tags, setTags }: AddressTaggingProps) {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   
-  // Create a new tag with signature for authentication
   const createTag = async (signature: string) => {
     if (!address || !isValidAddress(address2Tag) || !tagName.trim()) {
       setError('Please provide a valid address and tag name')

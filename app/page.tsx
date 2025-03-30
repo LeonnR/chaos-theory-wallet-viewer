@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react'
 import { useAccount, useDisconnect } from 'wagmi'
 import TransactionList from '@/components/TransactionList'
 import WalletConnect from '@/components/WalletConnect'
-import AddressTagging from '@/components/AddressTagging'
 import { Transaction, AddressTag } from '@/types'
+import { io } from 'socket.io-client'
+import { SOCKET_EVENTS, socketConfig } from '@/app/socket-config'
 
 export default function Home() {
   const { address, isConnected } = useAccount()
@@ -13,66 +14,269 @@ export default function Home() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [tags, setTags] = useState<AddressTag[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [socket, setSocket] = useState<any>(null)
+  const [connectionStatus, setConnectionStatus] = useState<string>('disconnected')
+  const [error, setError] = useState<string | null>(null)
   
-  // Fetch transaction history when wallet is connected
+  // Initialize Socket.io connection
   useEffect(() => {
-    if (isConnected && address) {
-      fetchTransactionHistory()
-      setupWebSocketConnection()
-      fetchTags()
-    }
-    
-    return () => {
-      // Clean up WebSocket connection when component unmounts
-      if (window.transactionSocket) {
-        window.transactionSocket.close()
+    // Socket should only be initialized once
+    if (!socket) {
+      try {
+        // Use the current location with path /api/socket
+        const socketUrl = window.location.hostname === 'localhost' 
+          ? `http://${window.location.hostname}:3000`  // Connect to our standalone server
+          : window.location.origin;  // Production: use the same origin
+
+        console.log('Initializing socket connection to:', socketUrl);
+        
+        // Create the socket instance with enhanced debugging
+        const newSocket = io(socketUrl, {
+          ...socketConfig
+        });
+        
+        // Enhanced error handling
+        newSocket.io.on('error', (error) => {
+          console.error('Socket.io transport error:', error);
+        });
+        
+        newSocket.io.on('reconnect_attempt', (attempt) => {
+          console.log(`Socket reconnection attempt #${attempt}`);
+        });
+        
+        // Log connection details
+        console.log(`Socket connection established with ID: ${newSocket.id}`);
+        
+        // Setup socket event listeners for connection status
+        newSocket.on(SOCKET_EVENTS.CONNECT, () => {
+          console.log('Socket connected');
+          setConnectionStatus('connected');
+          setError(null);
+        });
+        
+        newSocket.on(SOCKET_EVENTS.DISCONNECT, () => {
+          console.log('Socket disconnected');
+          setConnectionStatus('disconnected');
+        });
+        
+        newSocket.on(SOCKET_EVENTS.CONNECT_ERROR, (err) => {
+          console.error('Socket connection error:', err);
+          setConnectionStatus('error');
+          setError(`Connection error: ${err.message}`);
+        });
+        
+        setSocket(newSocket);
+        
+        return () => {
+          console.log('Cleaning up socket connection');
+          newSocket.disconnect();
+        };
+      } catch (err) {
+        console.error('Error initializing socket:', err);
+        setError(`Failed to initialize socket: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-  }, [isConnected, address])
+  }, [socket]);
   
-  const fetchTransactionHistory = async () => {
-    setIsLoading(true)
+  // Handle wallet connection
+  useEffect(() => {
+    if (isConnected && address && socket) {
+      setIsLoading(true);
+      setError(null);
+      
+      try {
+        // Connect the socket if not connected
+        if (!socket.connected) {
+          console.log('Socket not connected, connecting now...');
+          socket.connect();
+        }
+        
+        console.log('Connecting socket and sending wallet address:', address);
+        
+        // Remove previous listeners to avoid duplicates
+        socket.off(SOCKET_EVENTS.TRANSACTION_HISTORY);
+        socket.off(SOCKET_EVENTS.NEW_TRANSACTION);
+        socket.off(SOCKET_EVENTS.USING_MOCK_DATA);
+        socket.off(SOCKET_EVENTS.CONNECTION_ERROR);
+        
+        // Send wallet address to server
+        socket.emit(SOCKET_EVENTS.WALLET_CONNECT, address);
+        
+        // Listen for initial transaction history
+        socket.on(SOCKET_EVENTS.TRANSACTION_HISTORY, async (data: Transaction[]) => {
+          console.log(`Received ${data.length} transactions from server`);
+          setTransactions(data);
+          setIsLoading(false);
+          
+          // Store transactions in Supabase
+          if (data.length > 0) {
+            try {
+              await fetch('/api/transactions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+              });
+              console.log('Transactions stored in database');
+            } catch (dbError) {
+              console.error('Failed to store transactions in database:', dbError);
+            }
+          }
+        });
+        
+        // Listen for new transactions
+        socket.on(SOCKET_EVENTS.NEW_TRANSACTION, async (newTransaction: Transaction) => {
+          console.log('Received new transaction:', newTransaction.hash);
+          setTransactions(prev => [newTransaction, ...prev]);
+          
+          // Store new transaction in Supabase
+          try {
+            await fetch('/api/transactions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(newTransaction)
+            });
+            console.log('New transaction stored in database');
+          } catch (dbError) {
+            console.error('Failed to store new transaction in database:', dbError);
+          }
+        });
+        
+        // Handle mock data notification
+        socket.on(SOCKET_EVENTS.USING_MOCK_DATA, (data: {message: string}) => {
+          console.warn('Using mock data:', data.message);
+          setError(`Note: ${data.message}`);
+        });
+        
+        // Handle connection errors
+        socket.on(SOCKET_EVENTS.CONNECTION_ERROR, (data: {message: string}) => {
+          console.error('Connection error from server:', data.message);
+          setError(`Connection error: ${data.message}`);
+        });
+        
+        // Add a reconnect handler
+        socket.io.on("reconnect", () => {
+          console.log('Socket reconnected, resending wallet address');
+          socket.emit(SOCKET_EVENTS.WALLET_CONNECT, address);
+        });
+        
+        // Fetch transactions from Supabase
+        fetchStoredTransactions();
+        
+        // Fetch tags
+        fetchTags();
+      } catch (err) {
+        console.error('Error in wallet connection effect:', err);
+        setError(`Connection error: ${err instanceof Error ? err.message : String(err)}`);
+        setIsLoading(false);
+      }
+      
+      return () => {
+        // Clean up event listeners and disconnect
+        console.log('Cleaning up socket event listeners');
+        socket.off(SOCKET_EVENTS.TRANSACTION_HISTORY);
+        socket.off(SOCKET_EVENTS.NEW_TRANSACTION);
+        socket.off(SOCKET_EVENTS.USING_MOCK_DATA);
+        socket.off(SOCKET_EVENTS.CONNECTION_ERROR);
+        socket.io.off("reconnect");
+        socket.emit(SOCKET_EVENTS.WALLET_DISCONNECT);
+      };
+    }
+    
+  }, [isConnected, address, socket]);
+  
+  // Fetch transactions stored in Supabase
+  const fetchStoredTransactions = async () => {
+    if (!address) return;
+    
     try {
-      const response = await fetch(`/api/transactions?address=${address}`)
-      const data = await response.json()
-      setTransactions(data)
+      setIsLoading(true);
+      console.log('Fetching stored transactions for address:', address);
+      
+      const response = await fetch(`/api/transactions?address=${address}`);
+      if (!response.ok) {
+        throw new Error('Failed to fetch stored transactions');
+      }
+      
+      const data = await response.json();
+      console.log(`Fetched ${data.length} stored transactions from database`);
+      
+      if (data.length > 0) {
+        // Only update state if we got transactions and no socket transactions yet
+        if (transactions.length === 0) {
+          setTransactions(data);
+        }
+        setIsLoading(false);
+      }
     } catch (error) {
-      console.error('Failed to fetch transaction history:', error)
-    } finally {
-      setIsLoading(false)
+      console.error('Error fetching stored transactions:', error);
+      // Don't set error state here as we might still get transactions from socket
     }
   }
   
-  const setupWebSocketConnection = () => {
-    // Create WebSocket connection for real-time transaction streaming
-    const socket = new WebSocket(`${process.env.NEXT_PUBLIC_WS_URL}/transactions?address=${address}`)
-    
-    socket.onopen = () => {
-      console.log('WebSocket connection established')
+  // Disconnect socket when wallet disconnects
+  useEffect(() => {
+    if (!isConnected && socket) {
+      console.log('Wallet disconnected, notifying server');
+      socket.emit(SOCKET_EVENTS.WALLET_DISCONNECT);
     }
-    
-    socket.onmessage = (event) => {
-      const newTransaction = JSON.parse(event.data)
-      setTransactions(prev => [newTransaction, ...prev])
-    }
-    
-    socket.onerror = (error) => {
-      console.error('WebSocket error:', error)
-    }
-    
-    // Store the socket instance for cleanup
-    window.transactionSocket = socket
-  }
+  }, [isConnected, socket]);
   
   const fetchTags = async () => {
     try {
+      console.log('Fetching tags for address:', address);
       const response = await fetch(`/api/tags?address=${address}`)
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to fetch tags');
+      }
+      
       const data = await response.json()
-      setTags(data)
+      console.log(`Fetched ${data.length} tags`);
+      
+      // Format tags to match our expected format if needed
+      const formattedTags: AddressTag[] = data.map((tag: any) => ({
+        id: tag.id,
+        address: tag.address,
+        tag: tag.tag,
+        created_by: tag.created_by,
+        signature: tag.signature,
+        created_at: tag.created_at
+      }));
+      
+      setTags(formattedTags)
     } catch (error) {
       console.error('Failed to fetch address tags:', error)
+      setError(`Failed to fetch tags: ${error instanceof Error ? error.message : String(error)}`)
     }
   }
+  
+  const testWebSocket = () => {
+    console.log('Testing direct WebSocket connection...');
+    
+    // Create a direct WebSocket connection
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${window.location.hostname}:3000/api/socket`;
+    console.log('Connecting to WebSocket URL:', wsUrl);
+    
+    const ws = new WebSocket(wsUrl);
+    
+    ws.onopen = () => {
+      console.log('Direct WebSocket connection established successfully!');
+      setError(null);
+      // Close after successful test
+      setTimeout(() => ws.close(), 1000);
+    };
+    
+    ws.onerror = (err) => {
+      console.error('Direct WebSocket error:', err);
+      setError('Direct WebSocket connection failed. Check server logs.');
+    };
+    
+    ws.onclose = () => {
+      console.log('Direct WebSocket connection closed');
+    };
+  };
   
   return (
     <div className="flex flex-col min-h-screen bg-[#0a051d] text-white relative" style={{ margin: 0, padding: 0, backgroundImage: 'radial-gradient(circle at 25% 10%, rgba(120, 40, 200, 0.15) 0%, transparent 45%)' }}>
@@ -148,27 +352,62 @@ export default function Home() {
                 <h2 className="text-xl font-semibold mb-4 flex items-center">
                   <div className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-indigo-600 flex items-center justify-center mr-3">
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-white" viewBox="0 0 20 20" fill="currentColor">
-                    <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z" />
+                    <path d="M11 3a1 1 0 10-2 0v1a1 1 0 102 0V3zM15.657 5.757a1 1 0 00-1.414-1.414l-.707.707a1 1 0 001.414 1.414l.707-.707zM18 10a1 1 0 01-1 1h-1a1 1 0 110-2h1a1 1 0 011 1zM5.05 6.464A1 1 0 106.464 5.05l-.707-.707a1 1 0 00-1.414 1.414l.707.707zM5 10a1 1 0 01-1 1H3a1 1 0 110-2h1a1 1 0 011 1zM8 16v-1h4v-1a2 2 0 11-4 0zM12 14c.015-.34.208-.646.477-.859a4 4 0 10-4.954 0c.27.213.462.519.476.859h4.002z" />
                   </svg>
                   </div>
                   <span className="text-transparent bg-clip-text bg-gradient-to-r from-purple-200 to-white">Network</span>
                 </h2>
-                <div className="flex items-center p-3 bg-[#1D0F45] rounded-lg border border-purple-700/30">
-                  <div className="relative">
-                    <div className="h-3 w-3 rounded-full bg-green-500 mr-3"></div>
-                    <div className="absolute inset-0 h-3 w-3 rounded-full bg-green-400 animate-ping opacity-50"></div>
+                <div className="flex flex-col space-y-3">
+                  <div className="flex items-center p-3 bg-[#1D0F45] rounded-lg border border-purple-700/30">
+                    <div className="relative">
+                      <div className="h-3 w-3 rounded-full bg-green-500 mr-3"></div>
+                      <div className="absolute inset-0 h-3 w-3 rounded-full bg-green-400 animate-ping opacity-50"></div>
+                    </div>
+                    <p className="font-medium">Ethereum Mainnet</p>
                   </div>
-                  <p className="font-medium">Ethereum Mainnet</p>
+
+                  <div className="flex items-center p-3 bg-[#1D0F45] rounded-lg border border-purple-700/30">
+                    <div className="relative">
+                      <div className={`h-3 w-3 rounded-full mr-3 ${
+                        connectionStatus === 'connected' ? 'bg-green-500' : 
+                        connectionStatus === 'disconnected' ? 'bg-yellow-500' : 
+                        'bg-red-500'
+                      }`}></div>
+                      {connectionStatus === 'connected' && (
+                        <div className="absolute inset-0 h-3 w-3 rounded-full bg-green-400 animate-ping opacity-50"></div>
+                      )}
+                    </div>
+                    <p className="font-medium">Socket: {connectionStatus}</p>
+                  </div>
+                  
+                  {error && (
+                    <div className="p-3 bg-red-900/20 text-red-300 border border-red-700/30 rounded-lg text-sm">
+                      {error}
+                    </div>
+                  )}
+                  
+                  <div className="p-2 bg-[#1D0F45] rounded-lg border border-purple-700/30 text-xs text-purple-300/80">
+                    {transactions.length === 0 && !isLoading ? 
+                      "No transactions found. This could be due to a new wallet, API limitations, or connectivity issues." : 
+                      `Loaded ${transactions.length} transactions`
+                    }
+                  </div>
+                  
+                  <button 
+                    onClick={testWebSocket}
+                    className="p-2 bg-purple-800/50 hover:bg-purple-700/50 text-white rounded-lg text-sm transition-colors"
+                  >
+                    Test WebSocket Connection
+                  </button>
                 </div>
               </div>
             </div>
-            
-            <AddressTagging tags={tags} setTags={setTags} />
             
             <TransactionList 
               transactions={transactions} 
               isLoading={isLoading} 
               tags={tags}
+              setTags={setTags}
             />
           </>
         )}

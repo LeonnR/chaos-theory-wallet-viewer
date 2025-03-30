@@ -1,10 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { AddressTag } from '@/types'
 import { ethers } from 'ethers'
-
-// Simulated database for tags
-// In a real app, this would be a database connection
-export let mockTags: AddressTag[] = []
+import { TagsDB } from '@/utils/db'
 
 // Verify the signature to authenticate the user
 function verifySignature(message: string, signature: string, address: string): boolean {
@@ -25,8 +22,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Wallet address is required' }, { status: 400 })
   }
   
-  // Filter tags created by this user
-  const userTags = mockTags.filter(tag => tag.createdBy === address)
+  // Get tags from the database
+  const userTags = TagsDB.findByWallet(address)
   
   return NextResponse.json(userTags)
 }
@@ -55,17 +52,12 @@ export async function POST(request: NextRequest) {
     )
   }
   
-  // Create new tag
-  const newTag: AddressTag = {
-    id: `tag-${Date.now()}`,
+  // Create new tag in the database
+  const newTag = TagsDB.create({
     address: address.toLowerCase(),
     tag,
     createdBy: createdBy.toLowerCase(),
-    createdAt: Math.floor(Date.now() / 1000)
-  }
-  
-  // Add to mock database
-  mockTags.push(newTag)
+  })
   
   return NextResponse.json(newTag, { status: 201 })
 } 

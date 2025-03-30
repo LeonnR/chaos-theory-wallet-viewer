@@ -10,12 +10,11 @@ export default function WalletConnect() {
   const [mounted, setMounted] = useState(false)
   const appKit = useAppKit()
 
-  // This is needed because we're using hydration
+
   useEffect(() => {
     setMounted(true)
   }, [])
 
-  // Wait until after client-side hydration to show
   if (!mounted) return null
 
   return (
