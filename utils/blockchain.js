@@ -1,31 +1,170 @@
 import { ethers } from 'ethers';
 import axios from 'axios';
-import { NETWORKS, DEFAULT_NETWORK, ETHERSCAN_API_KEY, MAX_TRANSACTIONS } from '@/app/blockchain-config';
+import { NETWORKS, DEFAULT_NETWORK, MAX_TRANSACTIONS } from '@/app/blockchain-config';
 
 // Create Ethereum providers
 let httpProvider = null;
 let wsProvider = null;
 
+// Ensure we have access to API keys
+const getInfuraKey = () => process.env.INFURA_API_KEY || '';
+const getEtherscanKey = () => process.env.ETHERSCAN_API_KEY || '';
+
 /**
  * Initialize the blockchain providers
  * @param {object} network - Network configuration object
  */
-export function initProviders(network = DEFAULT_NETWORK) {
-  // Initialize HTTP provider
-  httpProvider = new ethers.providers.JsonRpcProvider(network.rpcUrl);
+export async function initProviders(network = DEFAULT_NETWORK) {
+  try {
+    console.log('Initializing providers with network:', network.name);
+    
+    // Check if we have the necessary API keys
+    const infuraKey = getInfuraKey();
+    if (!infuraKey || infuraKey.length === 0) {
+      console.error('Cannot initialize providers: Missing Infura API key in environment variables');
+      throw new Error('Missing Infura API key');
+    }
+    
+    // Initialize HTTP provider with the API key
+    const rpcUrl = network.rpcUrl.replace(/{INFURA_API_KEY}|YOUR_INFURA_API_KEY/, infuraKey);
+    console.log('Using RPC URL:', rpcUrl.replace(infuraKey, '****'));
+    
+    // Initialize HTTP provider
+    httpProvider = new ethers.providers.JsonRpcProvider(rpcUrl);
+    
+    // Test the provider
+    const blockNumber = await httpProvider.getBlockNumber();
+    console.log(`Successfully connected to Ethereum network. Current block: ${blockNumber}`);
+    
+    return { httpProvider, wsProvider: null };
+  } catch (error) {
+    console.error('Failed to initialize providers:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Format transaction data 
+ * @param {object} tx - Transaction object
+ * @returns {object} - Formatted transaction
+ */
+export function formatTransaction(tx) {
+  return {
+    hash: tx.hash,
+    from: tx.from.toLowerCase(),
+    to: tx.to ? tx.to.toLowerCase() : null, // null for contract creation
+    value: tx.value,
+    timestamp: tx.timeStamp || Math.floor(Date.now() / 1000),
+    blockNumber: tx.blockNumber || 0,
+    gas: tx.gas || '0',
+    gasPrice: tx.gasPrice || '0',
+    nonce: tx.nonce || 0,
+    status: tx.status || 'success'
+  };
+}
+
+/**
+ * Get historical transactions for an address directly from Etherscan
+ * @param {string} address - Ethereum address
+ * @param {number} limit - Maximum number of transactions to fetch
+ * @returns {Promise<Object>} - Object containing transactions array and error message if any
+ */
+export async function getAddressTransactions(address, limit = MAX_TRANSACTIONS) {
+  console.log(`Fetching transactions for ${address}, limit: ${limit}`);
   
-  // Initialize WebSocket provider
-  wsProvider = new ethers.providers.WebSocketProvider(network.wsUrl);
+  // Check for Etherscan API key
+  const etherscanKey = getEtherscanKey();
+  if (!etherscanKey || etherscanKey.length === 0) {
+    console.error('No Etherscan API key provided in environment variables');
+    return {
+      transactions: [],
+      error: 'Etherscan API key is required to fetch transaction history'
+    };
+  }
   
-  // Set up automatic reconnection for WebSocket
-  wsProvider._websocket.on('close', () => {
-    console.log('WebSocket connection closed. Reconnecting...');
-    setTimeout(() => {
-      wsProvider = new ethers.providers.WebSocketProvider(network.wsUrl);
-    }, 3000);
-  });
-  
-  return { httpProvider, wsProvider };
+  try {
+    // Use Etherscan API to get transactions
+    // Default to mainnet
+    const baseUrl = 'https://api.etherscan.io/api';
+    console.log(`Using Etherscan API: ${baseUrl}`);
+    
+    // Get outgoing transactions (where address is sender)
+    const outgoingResponse = await axios.get(baseUrl, {
+      params: {
+        module: 'account',
+        action: 'txlist',
+        address: address,
+        startblock: 0,
+        endblock: 99999999,
+        page: 1,
+        offset: limit,
+        sort: 'desc',
+        apikey: etherscanKey
+      }
+    });
+    
+    // Get incoming transactions (internal transactions where address is receiver)
+    const incomingResponse = await axios.get(baseUrl, {
+      params: {
+        module: 'account',
+        action: 'txlistinternal',
+        address: address,
+        startblock: 0,
+        endblock: 99999999,
+        page: 1,
+        offset: limit,
+        sort: 'desc',
+        apikey: etherscanKey
+      }
+    });
+    
+    let transactions = [];
+    
+    // Process outgoing transactions
+    if (outgoingResponse.data.status === '1') {
+      console.log(`Found ${outgoingResponse.data.result.length} outgoing transactions`);
+      transactions = transactions.concat(outgoingResponse.data.result);
+    } else {
+      console.warn('Etherscan outgoing tx API returned:', outgoingResponse.data.message);
+    }
+    
+    // Process incoming transactions
+    if (incomingResponse.data.status === '1') {
+      console.log(`Found ${incomingResponse.data.result.length} incoming transactions`);
+      transactions = transactions.concat(incomingResponse.data.result);
+    } else {
+      console.warn('Etherscan incoming tx API returned:', incomingResponse.data.message);
+    }
+    
+    // If no transactions found
+    if (transactions.length === 0) {
+      return {
+        transactions: [],
+        error: 'No transactions found for this address'
+      };
+    }
+    
+    // Sort by timestamp descending
+    transactions.sort((a, b) => b.timeStamp - a.timeStamp);
+    
+    // Limit the results
+    transactions = transactions.slice(0, limit);
+    
+    // Format transactions
+    const formattedTransactions = transactions.map(tx => formatTransaction(tx));
+    
+    console.log(`Returning ${formattedTransactions.length} transactions for ${address}`);
+    return {
+      transactions: formattedTransactions,
+      error: null
+    };
+  } catch (error) {
+    console.error('Error fetching transactions:', error);
+    return {
+      transactions: [],
+      error: `Failed to fetch transactions: ${error.message}`
+    };
+  }
 }
 
 /**
@@ -36,31 +175,6 @@ export function initProviders(network = DEFAULT_NETWORK) {
 export async function getTransactionReceipt(txHash) {
   if (!httpProvider) initProviders();
   return await httpProvider.getTransactionReceipt(txHash);
-}
-
-/**
- * Format transaction data to match our application's format
- * @param {object} tx - Transaction object from ethers.js
- * @param {object} receipt - Transaction receipt object
- * @returns {object} - Formatted transaction
- */
-export function formatTransaction(tx, receipt) {
-  const status = !receipt ? 'pending' : 
-                receipt.status === 1 ? 'success' : 'failed';
-  
-  return {
-    id: tx.hash,
-    hash: tx.hash,
-    from: tx.from.toLowerCase(),
-    to: tx.to ? tx.to.toLowerCase() : null, // null for contract creation
-    value: tx.value.toString(),
-    timestamp: tx.timestamp || Math.floor(Date.now() / 1000), // Use block timestamp if available
-    blockNumber: tx.blockNumber || 0,
-    gas: tx.gasLimit.toString(),
-    gasPrice: tx.gasPrice.toString(),
-    nonce: tx.nonce,
-    status: status
-  };
 }
 
 // Add a function to generate mock transaction data for testing
@@ -110,200 +224,6 @@ export function generateMockTransactions(address, count = 10) {
 }
 
 /**
- * Get historical transactions for an address
- * @param {string} address - Ethereum address
- * @param {number} limit - Maximum number of transactions to fetch
- * @returns {Promise<Array>} - Array of formatted transactions
- */
-export async function getAddressTransactions(address, limit = MAX_TRANSACTIONS) {
-  if (!httpProvider) {
-    try {
-      initProviders();
-    } catch (err) {
-      console.error('Failed to initialize providers:', err);
-      // Return mock data since we can't connect
-      console.warn('Using mock transaction data due to provider initialization failure');
-      return generateMockTransactions(address, limit);
-    }
-  }
-  
-  try {
-    // For complete transaction history, we need to use Etherscan API
-    // Infura doesn't provide a direct way to get all transactions for an address
-    if (ETHERSCAN_API_KEY && ETHERSCAN_API_KEY.length > 0) {
-      try {
-        const network = httpProvider.network.name === 'homestead' ? '' : `-${httpProvider.network.name}`;
-        const baseUrl = `https://api${network}.etherscan.io/api`;
-        
-        // Get transactions where address is sender
-        const outgoingTxResponse = await axios.get(baseUrl, {
-          params: {
-            module: 'account',
-            action: 'txlist',
-            address: address,
-            startblock: 0,
-            endblock: 99999999,
-            page: 1,
-            offset: limit,
-            sort: 'desc',
-            apikey: ETHERSCAN_API_KEY
-          }
-        });
-        
-        // Get transactions where address is receiver
-        const incomingTxResponse = await axios.get(baseUrl, {
-          params: {
-            module: 'account',
-            action: 'txlistinternal',
-            address: address,
-            startblock: 0,
-            endblock: 99999999,
-            page: 1,
-            offset: limit,
-            sort: 'desc',
-            apikey: ETHERSCAN_API_KEY
-          }
-        });
-        
-        // Combine both results
-        let transactions = [];
-        
-        if (outgoingTxResponse.data.status === '1') {
-          transactions = transactions.concat(outgoingTxResponse.data.result);
-        } else {
-          console.warn('Etherscan outgoing tx API returned error:', outgoingTxResponse.data.message);
-        }
-        
-        if (incomingTxResponse.data.status === '1') {
-          transactions = transactions.concat(incomingTxResponse.data.result);
-        } else {
-          console.warn('Etherscan incoming tx API returned error:', incomingTxResponse.data.message);
-        }
-        
-        // If no transactions were found from Etherscan
-        if (transactions.length === 0) {
-          console.warn('No transactions found in Etherscan. Falling back to alternative methods.');
-          // Try the fallback method
-          return await getFallbackTransactions(address, limit);
-        }
-        
-        // Sort by timestamp descending
-        transactions.sort((a, b) => b.timeStamp - a.timeStamp);
-        
-        // Limit the results
-        transactions = transactions.slice(0, limit);
-        
-        // Format transactions to match our app's format
-        const formattedTransactions = await Promise.all(
-          transactions.map(async (tx) => {
-            try {
-              // Etherscan API returns slightly different format than ethers.js
-              const formattedTx = {
-                hash: tx.hash,
-                from: tx.from.toLowerCase(),
-                to: tx.to ? tx.to.toLowerCase() : null,
-                value: ethers.BigNumber.from(tx.value).toString(),
-                blockNumber: parseInt(tx.blockNumber),
-                timestamp: parseInt(tx.timeStamp),
-                gasLimit: ethers.BigNumber.from(tx.gas),
-                gasPrice: ethers.BigNumber.from(tx.gasPrice),
-                nonce: parseInt(tx.nonce)
-              };
-              
-              const receipt = await getTransactionReceipt(tx.hash);
-              return formatTransaction(formattedTx, receipt);
-            } catch (err) {
-              console.error('Error formatting transaction:', err);
-              // Skip this transaction if there's an error
-              return null;
-            }
-          })
-        );
-        
-        // Filter out null transactions (those that had errors)
-        const validTransactions = formattedTransactions.filter(tx => tx !== null);
-        
-        if (validTransactions.length === 0) {
-          console.warn('All transactions failed to format. Falling back to alternative methods.');
-          return await getFallbackTransactions(address, limit);
-        }
-        
-        return validTransactions;
-      } catch (etherscanError) {
-        console.error('Etherscan API error:', etherscanError);
-        // If Etherscan fails, try the fallback
-        return await getFallbackTransactions(address, limit);
-      }
-    } else {
-      // No Etherscan API key provided
-      return await getFallbackTransactions(address, limit);
-    }
-  } catch (error) {
-    console.error('Error fetching transactions:', error);
-    // Return mock data as a last resort
-    console.warn('All methods failed. Returning mock transaction data.');
-    return generateMockTransactions(address, limit);
-  }
-}
-
-/**
- * Fallback method to get transactions when Etherscan is not available
- */
-async function getFallbackTransactions(address, limit) {
-  try {
-    console.warn('No Etherscan API key provided or API failed. Fetching limited transaction history.');
-    
-    // Get current block number
-    const blockNumber = await httpProvider.getBlockNumber();
-    
-    // Get recent blocks (last 10 blocks)
-    const blocks = await Promise.all(
-      Array.from({ length: 10 }, (_, i) => 
-        httpProvider.getBlockWithTransactions(blockNumber - i)
-      )
-    );
-    
-    // Filter transactions related to the address
-    const transactions = blocks
-      .flatMap(block => block.transactions)
-      .filter(tx => 
-        tx.from.toLowerCase() === address.toLowerCase() || 
-        (tx.to && tx.to.toLowerCase() === address.toLowerCase())
-      );
-    
-    // Format transactions
-    const formattedTransactions = await Promise.all(
-      transactions.map(async (tx) => {
-        try {
-          const receipt = await getTransactionReceipt(tx.hash);
-          // Add timestamp from block
-          const block = await httpProvider.getBlock(tx.blockNumber);
-          tx.timestamp = block.timestamp;
-          return formatTransaction(tx, receipt);
-        } catch (err) {
-          console.error('Error formatting transaction:', err);
-          return null;
-        }
-      })
-    );
-    
-    // Filter out null transactions
-    const validTransactions = formattedTransactions.filter(tx => tx !== null);
-    
-    if (validTransactions.length === 0) {
-      console.warn('No transactions found via blockchain provider. Using mock data.');
-      return generateMockTransactions(address, limit);
-    }
-    
-    return validTransactions;
-  } catch (error) {
-    console.error('Error in fallback transaction fetching:', error);
-    // Return mock data as a last resort
-    return generateMockTransactions(address, limit);
-  }
-}
-
-/**
  * Subscribe to new transactions for an address
  * @param {string} address - Ethereum address to monitor
  * @param {function} callback - Callback function to call when new transaction is detected
@@ -328,7 +248,7 @@ export function subscribeToAddressTransactions(address, callback) {
       }
       
       // Format transaction
-      const formattedTx = formatTransaction(tx, null);
+      const formattedTx = formatTransaction(tx);
       
       // Call callback
       callback(formattedTx);
@@ -368,7 +288,7 @@ export function subscribeToAddressTransactions(address, callback) {
           tx.timestamp = block.timestamp;
           
           // Format and send the transaction
-          const formattedTx = formatTransaction(tx, receipt);
+          const formattedTx = formatTransaction(tx);
           callback(formattedTx);
         }
       }

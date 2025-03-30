@@ -30,7 +30,6 @@ export interface SocketEvents {
   WALLET_DISCONNECT: string;
   TRANSACTION_HISTORY: string;
   NEW_TRANSACTION: string;
-  USING_MOCK_DATA: string;
   CONNECTION_ERROR: string;
   TRANSPORT_CHANGE: string;
 } 

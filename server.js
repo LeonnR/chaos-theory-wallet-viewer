@@ -38,7 +38,7 @@ const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev });
 const handle = app.getRequestHandler();
 
-// Load API keys from environment variables - be more lenient with characters
+// Load API keys from environment variables
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || '';
 const INFURA_API_KEY = process.env.INFURA_API_KEY || '';
 
@@ -46,13 +46,13 @@ const INFURA_API_KEY = process.env.INFURA_API_KEY || '';
 if (ETHERSCAN_API_KEY) {
   console.log(`Using Etherscan API key: ${ETHERSCAN_API_KEY.substring(0, 4)}...${ETHERSCAN_API_KEY.substring(ETHERSCAN_API_KEY.length - 4)}`);
 } else {
-  console.log('Etherscan API key not available - falling back to mock data');
+  console.log('Etherscan API key not available - API functionality will be limited');
 }
 
 if (INFURA_API_KEY) {
   console.log(`Using Infura API key: ${INFURA_API_KEY.substring(0, 4)}...${INFURA_API_KEY.substring(INFURA_API_KEY.length - 4)}`);
 } else {
-  console.log('Infura API key not available - using public endpoints');
+  console.log('Infura API key not available - API functionality will be limited');
 }
 
 // Define Socket.io event constants
@@ -71,7 +71,6 @@ const SOCKET_EVENTS = {
   NEW_TRANSACTION: 'new-transaction',
   
   // Status events
-  USING_MOCK_DATA: 'using-mock-data',
   CONNECTION_ERROR: 'connection-error'
 };
 
@@ -82,44 +81,39 @@ let wsProvider = null;
 // Initialize blockchain providers
 function initProviders() {
   try {
-    // Use Infura if API key is available, otherwise use a public RPC
-    const network = 'mainnet';
-    const rpcUrl = INFURA_API_KEY 
-      ? `https://mainnet.infura.io/v3/${INFURA_API_KEY}`
-      : 'https://eth.public-rpc.com';
+    // Use Infura if API key is available, otherwise fail
+    if (!INFURA_API_KEY) {
+      console.error('Infura API key not found in environment variables');
+      throw new Error('Missing Infura API key');
+    }
     
-    // Initialize HTTP provider only - we'll handle WebSockets separately
+    const rpcUrl = `https://mainnet.infura.io/v3/${INFURA_API_KEY}`;
+    
+    // Initialize HTTP provider
     httpProvider = new ethers.providers.JsonRpcProvider(rpcUrl);
     console.log('HTTP provider initialized successfully');
     
-    // We intentionally don't initialize the WebSocket provider from ethers
-    wsProvider = null;
-    console.log('Using HTTP provider for blockchain interactions');
-    
-    return { httpProvider, wsProvider: null };
+    return { httpProvider };
   } catch (error) {
     console.error('Failed to initialize providers:', error.message);
-    return { httpProvider: null, wsProvider: null };
+    return { httpProvider: null };
   }
 }
 
 // Format transaction for client
-function formatTransaction(tx, receipt) {
-  const status = !receipt ? 'pending' : 
-                receipt.status === 1 ? 'success' : 'failed';
-  
+function formatTransaction(tx) {
   return {
     id: tx.hash,
     hash: tx.hash,
     from: tx.from.toLowerCase(),
     to: tx.to ? tx.to.toLowerCase() : null, // null for contract creation
     value: tx.value.toString(),
-    timestamp: tx.timestamp || Math.floor(Date.now() / 1000), // Use block timestamp if available
+    timestamp: tx.timestamp || Math.floor(Date.now() / 1000), 
     blockNumber: tx.blockNumber || 0,
     gas: tx.gasLimit ? tx.gasLimit.toString() : tx.gas ? tx.gas.toString() : '0',
     gasPrice: tx.gasPrice ? tx.gasPrice.toString() : '0',
     nonce: tx.nonce,
-    status: status
+    status: tx.status || 'pending'
   };
 }
 
@@ -127,8 +121,8 @@ function formatTransaction(tx, receipt) {
 async function getEtherscanTransactions(address, limit = 100) {
   try {
     if (!ETHERSCAN_API_KEY) {
-      console.warn('No Etherscan API key provided. Falling back to mock data.');
-      return generateMockTransactions(address, limit);
+      console.error('No Etherscan API key provided in environment variables');
+      throw new Error('Etherscan API key is required');
     }
     
     console.log(`Fetching transactions for ${address} from Etherscan...`);
@@ -183,8 +177,8 @@ async function getEtherscanTransactions(address, limit = 100) {
     
     // If no transactions were found from Etherscan
     if (transactions.length === 0) {
-      console.warn('No transactions found in Etherscan. Falling back to mock data.');
-      return generateMockTransactions(address, limit);
+      console.warn('No transactions found in Etherscan.');
+      return [];
     }
     
     // Sort by timestamp descending
@@ -215,8 +209,7 @@ async function getEtherscanTransactions(address, limit = 100) {
     return formattedTransactions;
   } catch (error) {
     console.error('Error fetching transactions from Etherscan:', error);
-    console.warn('Falling back to mock data due to Etherscan API error');
-    return generateMockTransactions(address, limit);
+    throw error;
   }
 }
 
@@ -235,12 +228,12 @@ function subscribeToAddressTransactions(address, callback) {
         const { httpProvider: newHttpProvider } = initProviders();
         if (!newHttpProvider) {
           console.error('Failed to initialize HTTP provider for transaction polling');
-          return simulateTransactionUpdates(normalizedAddress, callback);
+          throw new Error('Failed to initialize provider');
         }
         httpProvider = newHttpProvider;
       } catch (error) {
         console.error('Error initializing HTTP provider:', error.message);
-        return simulateTransactionUpdates(normalizedAddress, callback);
+        throw error;
       }
     }
     
@@ -279,7 +272,7 @@ function subscribeToAddressTransactions(address, callback) {
             tx.timestamp = block.timestamp;
             
             // Format and send transaction
-            const formattedTx = formatTransaction(tx, receipt);
+            const formattedTx = formatTransaction(tx);
             callback(formattedTx);
           }
         }
@@ -313,7 +306,7 @@ function subscribeToAddressTransactions(address, callback) {
       console.log(`New pending transaction detected for ${address}: ${txHash}`);
       
       // Format transaction
-      const formattedTx = formatTransaction(tx, null);
+      const formattedTx = formatTransaction(tx);
       
       // Call callback
       callback(formattedTx);
@@ -357,7 +350,7 @@ function subscribeToAddressTransactions(address, callback) {
           tx.timestamp = block.timestamp;
           
           // Format and send the transaction
-          const formattedTx = formatTransaction(tx, receipt);
+          const formattedTx = formatTransaction(tx);
           callback(formattedTx);
         }
       }
@@ -374,76 +367,6 @@ function subscribeToAddressTransactions(address, callback) {
       wsProvider.off('block', blockFilter);
     }
   };
-}
-
-// Simulate transaction updates using mock data (ultimate fallback)
-function simulateTransactionUpdates(address, callback) {
-  console.log(`Using simulated transaction updates for ${address}`);
-  
-  // Send an initial mock transaction after a short delay
-  setTimeout(() => {
-    const newTx = generateMockTransaction(address);
-    callback(newTx);
-  }, 5000);
-  
-  // Set up periodic mock transactions
-  const interval = setInterval(() => {
-    // 20% chance of getting a new transaction every 10 seconds
-    if (Math.random() < 0.2) {
-      const newTx = generateMockTransaction(address);
-      callback(newTx);
-      console.log(`Emitted simulated transaction for ${address}`);
-    }
-  }, 10000);
-  
-  // Return cleanup function
-  return () => {
-    console.log(`Stopping simulated updates for ${address}`);
-    clearInterval(interval);
-  };
-}
-
-// Mock data generation functions (fallback)
-function generateMockTransactions(address, count = 10) {
-  const transactions = [];
-  const now = Math.floor(Date.now() / 1000);
-  
-  for (let i = 0; i < count; i++) {
-    // Randomly decide if this is an incoming or outgoing transaction
-    const isOutgoing = Math.random() > 0.5;
-    const mockAddresses = [
-      '0x1234567890123456789012345678901234567890',
-      '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
-      '0x9876543210987654321098765432109876543210',
-      '0xfedcbafedcbafedcbafedcbafedcbafedcbafedc',
-    ];
-    const from = isOutgoing ? address : mockAddresses[Math.floor(Math.random() * mockAddresses.length)];
-    const to = isOutgoing ? mockAddresses[Math.floor(Math.random() * mockAddresses.length)] : address;
-    
-    // Transaction created between 1 hour and 30 days ago
-    const timestamp = now - Math.floor(Math.random() * 2592000 + 3600);
-    
-    transactions.push({
-      id: `0x${i.toString(16).padStart(64, '0')}`,
-      hash: `0x${i.toString(16).padStart(64, '0')}`,
-      from: from.toLowerCase(),
-      to: to.toLowerCase(),
-      value: (Math.random() * 1.999 + 0.001).toFixed(6) + '000000000000000000', // Random ETH value
-      timestamp: timestamp,
-      blockNumber: 10000000 + i,
-      gas: (21000 + Math.floor(Math.random() * 50000)).toString(),
-      gasPrice: (Math.random() * 50 + 10).toFixed(2) + '000000000', // Random gas price in gwei
-      nonce: i,
-      status: Math.random() > 0.1 ? 'success' : (Math.random() > 0.5 ? 'failed' : 'pending')
-    });
-  }
-  
-  // Sort by timestamp (newest first)
-  return transactions.sort((a, b) => b.timestamp - a.timestamp);
-}
-
-function generateMockTransaction(address) {
-  return generateMockTransactions(address, 1)[0];
 }
 
 // Initialize providers
@@ -561,10 +484,12 @@ app.prepare().then(() => {
         console.log('Reinitializing providers for new connection...');
         initProviders();
         
-        // If we still don't have any providers, use mock data
+        // If we still don't have any providers, report the error
         if (!httpProvider && !wsProvider) {
-          console.warn('No providers available after reinitialization');
-          useMockDataForClient(socket, normalizedAddress);
+          console.error('No providers available after reinitialization');
+          socket.emit(SOCKET_EVENTS.CONNECTION_ERROR, { 
+            message: 'Failed to connect to blockchain providers. Please check API keys.'
+          });
           return;
         }
       }
@@ -590,21 +515,21 @@ app.prepare().then(() => {
           });
         } catch (subscriptionError) {
           console.error(`Error setting up transaction subscription: ${subscriptionError.message}`);
-          
-          // Fall back to simulated updates if subscription fails
-          unsubscribe = simulateTransactionUpdates(normalizedAddress, (newTx) => {
-            socket.emit(SOCKET_EVENTS.NEW_TRANSACTION, newTx);
+          socket.emit(SOCKET_EVENTS.CONNECTION_ERROR, { 
+            message: `Could not set up transaction notifications: ${subscriptionError.message}`
           });
         }
         
-        // Store unsubscribe function
-        subscriptions.set(socket.id, unsubscribe);
+        // Store unsubscribe function if we have one
+        if (unsubscribe) {
+          subscriptions.set(socket.id, unsubscribe);
+        }
         
       } catch (error) {
         console.error(`Error handling wallet connection for ${address}:`, error.message);
-        
-        // Fall back to mock data in case of error
-        useMockDataForClient(socket, normalizedAddress);
+        socket.emit(SOCKET_EVENTS.CONNECTION_ERROR, { 
+          message: `Error fetching transactions: ${error.message}`
+        });
       }
       
       // Cleanup on disconnect
@@ -629,33 +554,6 @@ app.prepare().then(() => {
       console.log(`Wallet disconnected from socket ${socket.id}`);
     });
   });
-
-  // Helper function to use mock data for a client
-  function useMockDataForClient(socket, address) {
-    console.warn(`Using mock data for ${address} due to API/connection errors`);
-    
-    // Generate and send mock history
-    const mockTxs = generateMockTransactions(address, 10);
-    socket.emit(SOCKET_EVENTS.TRANSACTION_HISTORY, mockTxs);
-    
-    // Set up simulated transaction streaming
-    const interval = setInterval(() => {
-      // 20% chance of getting a new transaction every 10 seconds
-      if (Math.random() < 0.2) {
-        const newTx = generateMockTransaction(address);
-        socket.emit(SOCKET_EVENTS.NEW_TRANSACTION, newTx);
-        console.log(`Emitted mock transaction to ${socket.id}`);
-      }
-    }, 10000);
-    
-    // Store cleanup function
-    subscriptions.set(socket.id, () => clearInterval(interval));
-    
-    // Inform the client we're using mock data
-    socket.emit(SOCKET_EVENTS.USING_MOCK_DATA, {
-      message: 'Using simulated data due to blockchain connection issues'
-    });
-  }
 
   // Start server
   const PORT = process.env.PORT || 3000;

@@ -96,7 +96,6 @@ export default function Home() {
         // Remove previous listeners to avoid duplicates
         socket.off(SOCKET_EVENTS.TRANSACTION_HISTORY);
         socket.off(SOCKET_EVENTS.NEW_TRANSACTION);
-        socket.off(SOCKET_EVENTS.USING_MOCK_DATA);
         socket.off(SOCKET_EVENTS.CONNECTION_ERROR);
         
         // Send wallet address to server
@@ -111,7 +110,12 @@ export default function Home() {
           // Store transactions in Supabase
           if (data.length > 0) {
             try {
-              await fetch('/api/transactions', {
+              // Use the same URL as the socket connection to ensure we hit the right server
+              const apiUrl = window.location.hostname === 'localhost' 
+                ? `http://${window.location.hostname}:3000/api/transactions`  // Use socket server port
+                : '/api/transactions';  // Production: use relative path
+              
+              await fetch(apiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
@@ -130,7 +134,12 @@ export default function Home() {
           
           // Store new transaction in Supabase
           try {
-            await fetch('/api/transactions', {
+            // Use the same URL as the socket connection to ensure we hit the right server
+            const apiUrl = window.location.hostname === 'localhost' 
+              ? `http://${window.location.hostname}:3000/api/transactions`  // Use socket server port
+              : '/api/transactions';  // Production: use relative path
+            
+            await fetch(apiUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(newTransaction)
@@ -139,12 +148,6 @@ export default function Home() {
           } catch (dbError) {
             console.error('Failed to store new transaction in database:', dbError);
           }
-        });
-        
-        // Handle mock data notification
-        socket.on(SOCKET_EVENTS.USING_MOCK_DATA, (data: {message: string}) => {
-          console.warn('Using mock data:', data.message);
-          setError(`Note: ${data.message}`);
         });
         
         // Handle connection errors
@@ -175,7 +178,6 @@ export default function Home() {
         console.log('Cleaning up socket event listeners');
         socket.off(SOCKET_EVENTS.TRANSACTION_HISTORY);
         socket.off(SOCKET_EVENTS.NEW_TRANSACTION);
-        socket.off(SOCKET_EVENTS.USING_MOCK_DATA);
         socket.off(SOCKET_EVENTS.CONNECTION_ERROR);
         socket.io.off("reconnect");
         socket.emit(SOCKET_EVENTS.WALLET_DISCONNECT);

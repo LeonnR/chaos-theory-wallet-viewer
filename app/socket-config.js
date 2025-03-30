@@ -27,7 +27,6 @@ export const SOCKET_EVENTS = {
   NEW_TRANSACTION: 'new-transaction',
   
   // Status events
-  USING_MOCK_DATA: 'using-mock-data',
   CONNECTION_ERROR: 'connection-error',
   
   // Transport events

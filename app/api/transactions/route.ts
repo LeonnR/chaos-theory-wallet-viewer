@@ -2,9 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { Transaction } from '@/types'
 import { getAddressTransactions } from '@/utils/blockchain'
 
-// Fallback to mock data if real data fetching fails
-import { ethers } from 'ethers'
-import crypto from 'crypto'
+// Define the return type from getAddressTransactions
+interface TransactionResult {
+  transactions: Transaction[];
+  error: string | null;
+}
 
 // Cache transactions to reduce API calls during development
 const transactionCache = new Map<string, { transactions: Transaction[], timestamp: number }>();
@@ -28,8 +30,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json(cacheEntry.transactions);
     }
     
-    // Fetch real transaction data
-    const transactions = await getAddressTransactions(address);
+    // Fetch transaction data
+    const result = await getAddressTransactions(address) as TransactionResult;
+    
+    if (result.error) {
+      return NextResponse.json({ error: result.error }, { status: 500 });
+    }
+    
+    const transactions = result.transactions || [];
     
     // Cache the result
     transactionCache.set(address, { 
@@ -39,51 +47,49 @@ export async function GET(request: NextRequest) {
     
     return NextResponse.json(transactions);
   } catch (error) {
-    console.error('Error fetching real transactions:', error);
-    
-    // Fallback to mock data if there's an error
-    console.warn('Falling back to mock transaction data');
-    const mockTransactions = generateMockTransactions(address);
-    return NextResponse.json(mockTransactions);
+    console.error('Error fetching transactions:', error);
+    return NextResponse.json({ 
+      error: error instanceof Error ? error.message : 'An unexpected error occurred'
+    }, { status: 500 });
   }
 }
 
-// Generate some mock transactions for demonstration (fallback only)
-function generateMockTransactions(address: string): Transaction[] {
-  // Return empty if no address
-  if (!address) return []
-  
-  const transactions: Transaction[] = []
-  const now = Math.floor(Date.now() / 1000)
-  
-  // Some example addresses for variety
-  const addresses = [
-    '0x1234567890123456789012345678901234567890',
-    '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd',
-    '0x9876543210987654321098765432109876543210',
-    '0xfedcbafedcbafedcbafedcbafedcbafedcbafedc',
-    address,
-  ]
-  
-  // Create 15 mock transactions
-  for (let i = 0; i < 15; i++) {
-    const isSender = Math.random() > 0.5
-    const otherParty = addresses[Math.floor(Math.random() * (addresses.length - 1))]
+// Add POST method handler
+export async function POST(request: NextRequest) {
+  try {
+    // Get transactions from request body
+    const transactionsData = await request.json();
     
-    transactions.push({
-      id: `tx-${i}-${Date.now()}`,
-      hash: `0x${crypto.randomBytes(32).toString('hex')}`,
-      from: isSender ? address.toLowerCase() : otherParty.toLowerCase(),
-      to: isSender ? otherParty.toLowerCase() : address.toLowerCase(),
-      value: ethers.utils.parseEther((Math.random() * 2).toFixed(6)).toString(),
-      timestamp: now - i * 3600, // Each tx is 1 hour apart
-      blockNumber: 10000000 + i,
-      gas: ethers.utils.parseUnits('21000', 'wei').toString(),
-      gasPrice: ethers.utils.parseUnits('20', 'gwei').toString(),
-      nonce: i,
-      status: Math.random() > 0.2 ? 'success' : (Math.random() > 0.5 ? 'pending' : 'failed')
-    })
+    // For single transaction
+    if (!Array.isArray(transactionsData)) {
+      console.log('Storing single transaction:', transactionsData.hash);
+      
+      // Here you would typically store the transaction in a database
+      // Since we've simplified to not use a database, we'll just acknowledge receipt
+      
+      return NextResponse.json({ 
+        success: true, 
+        message: 'Transaction received',
+        transaction: transactionsData
+      });
+    }
+    
+    // For multiple transactions
+    console.log(`Storing ${transactionsData.length} transactions`);
+    
+    // Here you would typically store the transactions in a database
+    // Since we've simplified to not use a database, we'll just acknowledge receipt
+    
+    return NextResponse.json({ 
+      success: true, 
+      message: 'Transactions received',
+      count: transactionsData.length 
+    });
+  } catch (error) {
+    console.error('Error storing transactions:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to store transactions' },
+      { status: 500 }
+    );
   }
-  
-  return transactions
 } 
