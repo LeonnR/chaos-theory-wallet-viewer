@@ -27,6 +27,17 @@ export default function TransactionList({ transactions, isLoading, tags, setTags
   const [isSubmittingTag, setIsSubmittingTag] = useState<boolean>(false)
   const [signature, setSignature] = useState<string>('')
   
+  // State for editing tags
+  const [isEditing, setIsEditing] = useState<boolean>(false)
+  const [tagToEdit, setTagToEdit] = useState<AddressTag | null>(null)
+  
+  // State for delete confirmation
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState<boolean>(false)
+  const [tagToDelete, setTagToDelete] = useState<AddressTag | null>(null)
+  
+  // State for tag management section
+  const [tagManagementOpen, setTagManagementOpen] = useState<boolean>(false)
+  
   // Add useEffect to log tags once
   useEffect(() => {
     if (tags && tags.length > 0) {
@@ -98,18 +109,32 @@ export default function TransactionList({ transactions, isLoading, tags, setTags
               </svg>
               {tag}
               {walletAddress && tagObject && tagObject.created_by && tagObject.created_by.toLowerCase() === walletAddress.toLowerCase() && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteTag(tagObject);
-                  }}
-                  className="ml-1 text-white hover:text-red-200 transition-colors"
-                  title="Delete this tag"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                  </svg>
-                </button>
+                <span className="flex ml-1">
+                  {/* <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEditTag(tagObject);
+                    }}
+                    className="mr-1 text-white hover:text-blue-200 transition-colors"
+                    title="Edit this tag"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                      <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openDeleteConfirmation(tagObject);
+                    }}
+                    className="text-white hover:text-red-200 transition-colors"
+                    title="Delete this tag"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                    </svg>
+                  </button> */}
+                </span>
               )}
             </span>
             {`${address.slice(0, 6)}...${address.slice(-4)}`}
@@ -436,7 +461,7 @@ export default function TransactionList({ transactions, isLoading, tags, setTags
             console.warn('📡 Response is not valid JSON:', responseText);
             result = { error: 'Invalid JSON response', raw: responseText };
           }
-        } catch (parseError) {
+        } catch (parseError: unknown) {
           console.error('❌ Error parsing API response:', parseError);
           result = { error: 'Failed to parse response', text: responseText };
         }
@@ -500,9 +525,198 @@ export default function TransactionList({ transactions, isLoading, tags, setTags
     }
   }, [signatureError]);
   
+  // Function to handle editing a tag
+  const handleEditTag = (tag: AddressTag) => {
+    setTagToEdit(tag);
+    setAddressToTag(tag.address);
+    setTagName(tag.tag);
+    setTagError(null);
+    setIsEditing(true);
+    setTagModalOpen(true);
+  };
+  
+  // Function to update a tag
+  const updateTag = async () => {
+    if (!tagToEdit || !walletAddress || !isValidAddress(addressToTag) || !tagName.trim()) {
+      setTagError('Please provide a valid tag name');
+      setIsSubmittingTag(false);
+      return;
+    }
+    
+    try {
+      setIsSubmittingTag(true);
+      
+      // Use the current window location with port to avoid CORS issues
+      const currentPort = window.location.port;
+      const baseUrl = `${window.location.protocol}//${window.location.hostname}:${currentPort}`;
+      
+      // Construct the payload for the update
+      const payload = {
+        address: addressToTag,
+        tag: tagName,
+        createdBy: walletAddress,
+        oldAddress: tagToEdit.address
+      };
+      
+      console.log(`Updating tag using URL: ${baseUrl}/api/tags`);
+      console.log('Update payload:', payload);
+      
+      const response = await fetch(`${baseUrl}/api/tags`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      
+      console.log('Update response status:', response.status);
+      console.log('Update response headers:', Object.fromEntries([...response.headers.entries()]));
+      
+      // Get raw text response first for safer handling
+      const responseText = await response.text();
+      console.log('Raw response text:', responseText);
+      
+      let responseData;
+      try {
+        // Only try to parse if response has content
+        if (responseText.trim()) {
+          responseData = JSON.parse(responseText);
+          console.log('Parsed response data:', responseData);
+        } else {
+          console.error('Empty response received from server');
+          throw new Error('Server returned an empty response');
+        }
+      } catch (parseError: unknown) {
+        console.error('Error parsing JSON response:', parseError);
+        throw new Error(`Error parsing server response: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
+      }
+      
+      if (!response.ok) {
+        const errorMessage = responseData?.error || 'Failed to update tag';
+        console.error('Server error updating tag:', responseData);
+        throw new Error(errorMessage);
+      }
+      
+      // Check if responseData has expected structure
+      if (!responseData || !responseData.address || !responseData.tag) {
+        console.error('Invalid response format:', responseData);
+        throw new Error('Server returned an invalid response format');
+      }
+      
+      console.log('Tag updated successfully:', responseData);
+      
+      // Update the tag in local state
+      setTags(tags.map(t => 
+        (t.address === tagToEdit.address && t.created_by === walletAddress) ? responseData : t
+      ));
+      
+      // Reset the form
+      closeTagModal();
+    } catch (err) {
+      console.error('Error updating tag:', err);
+      setTagError(err instanceof Error ? err.message : 'An unknown error occurred');
+    } finally {
+      setIsSubmittingTag(false);
+    }
+  };
+  
+  // Function to open delete confirmation dialog
+  const openDeleteConfirmation = (tag: AddressTag) => {
+    setTagToDelete(tag);
+    setDeleteConfirmOpen(true);
+  };
+  
+  // Function to close delete confirmation dialog
+  const closeDeleteConfirmation = () => {
+    setTagToDelete(null);
+    setDeleteConfirmOpen(false);
+  };
+  
+  // Add functionality to delete tags
+  const handleDeleteTag = async (tag: AddressTag) => {
+    if (!walletAddress || !tag.created_by || !tag.address) {
+      console.error('Missing required data for tag deletion');
+      return;
+    }
+    
+    try {
+      // Make sure we're only deleting tags created by this wallet
+      if (tag.created_by.toLowerCase() !== walletAddress.toLowerCase()) {
+        throw new Error('You can only delete tags you created');
+      }
+      
+      const params = new URLSearchParams({
+        walletAddress: walletAddress.toLowerCase(),
+        targetAddress: tag.address.toLowerCase()
+      });
+      
+      // Use the current window location with port to avoid CORS issues
+      const currentPort = window.location.port;
+      const baseUrl = `${window.location.protocol}//${window.location.hostname}:${currentPort}`;
+      const apiUrl = `${baseUrl}/api/tags?${params.toString()}`;
+      
+      console.log(`Deleting tag using URL: ${apiUrl}`);
+      
+      const response = await fetch(apiUrl, {
+        method: 'DELETE',
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error('Server error deleting tag:', errorData);
+        throw new Error(errorData.error || 'Failed to delete tag');
+      }
+      
+      const result = await response.json();
+      console.log('Tag deleted successfully:', result);
+      
+      // Remove the tag from local state
+      setTags(tags.filter(t => 
+        !(t.address && 
+          t.created_by && 
+          t.address.toLowerCase() === tag.address.toLowerCase() && 
+          t.created_by.toLowerCase() === walletAddress.toLowerCase())
+      ));
+      
+      // Close the confirmation dialog
+      closeDeleteConfirmation();
+    } catch (err) {
+      console.error('Error deleting tag:', err);
+      // Optionally show an error message to the user
+    }
+  };
+  
+  // Open tag modal for creating a tag for a specific address
+  const openTagModal = (address: string) => {
+    setAddressToTag(address);
+    setTagName('');
+    setTagError(null);
+    setIsEditing(false);
+    setTagToEdit(null);
+    setTagModalOpen(true);
+  };
+  
+  // Close tag modal
+  const closeTagModal = () => {
+    setTagModalOpen(false);
+    setAddressToTag('');
+    setTagName('');
+    setTagError(null);
+    setIsSubmittingTag(false);
+    setIsEditing(false);
+    setTagToEdit(null);
+  };
+
   // Handle tag submission
   const handleTagSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // If we're editing, use the updateTag function instead
+    if (isEditing && tagToEdit) {
+      await updateTag();
+      return;
+    }
+    
     console.group('📝 Tag Submit Handling');
     console.log('handleTagSubmit called');
     debugInfo.current.signAttempted = true;
@@ -627,74 +841,6 @@ export default function TransactionList({ transactions, isLoading, tags, setTags
     }
   }
   
-  // Open tag modal for a specific address
-  const openTagModal = (address: string) => {
-    setAddressToTag(address)
-    setTagName('')
-    setTagError(null)
-    setTagModalOpen(true)
-  }
-  
-  // Close tag modal
-  const closeTagModal = () => {
-    setTagModalOpen(false)
-    setAddressToTag('')
-    setTagName('')
-    setTagError(null)
-    setIsSubmittingTag(false)
-  }
-
-  // Add functionality to delete tags
-  const handleDeleteTag = async (tag: AddressTag) => {
-    if (!walletAddress || !tag.created_by || !tag.address) {
-      console.error('Missing required data for tag deletion');
-      return;
-    }
-    
-    try {
-      // Make sure we're only deleting tags created by this wallet
-      if (tag.created_by.toLowerCase() !== walletAddress.toLowerCase()) {
-        throw new Error('You can only delete tags you created');
-      }
-      
-      const params = new URLSearchParams({
-        walletAddress: walletAddress.toLowerCase(),
-        targetAddress: tag.address.toLowerCase()
-      });
-      
-      // Use the current window location with port to avoid CORS issues
-      const currentPort = window.location.port;
-      const baseUrl = `${window.location.protocol}//${window.location.hostname}:${currentPort}`;
-      const apiUrl = `${baseUrl}/api/tags?${params.toString()}`;
-      
-      console.log(`Deleting tag using URL: ${apiUrl}`);
-      
-      const response = await fetch(apiUrl, {
-        method: 'DELETE',
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Server error deleting tag:', errorData);
-        throw new Error(errorData.error || 'Failed to delete tag');
-      }
-      
-      const result = await response.json();
-      console.log('Tag deleted successfully:', result);
-      
-      // Remove the tag from local state
-      setTags(tags.filter(t => 
-        !(t.address && 
-          t.created_by && 
-          t.address.toLowerCase() === tag.address.toLowerCase() && 
-          t.created_by.toLowerCase() === walletAddress.toLowerCase())
-      ));
-    } catch (err) {
-      console.error('Error deleting tag:', err);
-      // Optionally show an error message to the user
-    }
-  };
-  
   // Expose debug info to the browser console
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -716,130 +862,21 @@ export default function TransactionList({ transactions, isLoading, tags, setTags
     }
   }, [walletAddress, addressToTag, tagName, signature, isSignatureLoading, signatureError]);
   
+  // Get all tags created by the current wallet
+  const getUserTags = (): AddressTag[] => {
+    if (!walletAddress || !tags) return [];
+    
+    return tags.filter(tag => 
+      tag.created_by && tag.created_by.toLowerCase() === walletAddress.toLowerCase()
+    );
+  };
+  
   return (
     <div className="relative w-full">
-      {/* Enhanced Tag Debugging Panel - Always visible in development for easier debugging */}
-      {/* <div className="bg-blue-900/50 border border-blue-500/50 rounded-lg p-4 mb-6 text-white">
-        <h3 className="text-xl font-bold mb-2 flex items-center">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
-          </svg>
-          Tag Debugging Panel
-        </h3>
-        <div className="flex justify-between items-center mb-2">
-          <span className="text-blue-200">Available Tags: <span className="font-bold text-white">{tags.length}</span></span>
-          <button
-            onClick={() => {
-              console.clear();
-              console.log("Tag Debugging Information:");
-              console.log("Total tags:", tags.length);
-              console.log("All tags:", tags);
-              
-              // Test specific addresses
-              const testAddresses = [
-                "0xae3cba71bc70ebe1e12b79b98d5e21f88e6da967", // DirectExchange tag
-                "0x704d16a5b11da69a2e48e4072855329b24476d1",  // TestViaAPI tag
-              ];
-              
-              testAddresses.forEach(addr => {
-                console.log(`Testing address: ${addr}`);
-                const tag = getTagForAddress(addr);
-                console.log(`Tag found:`, tag);
-              });
-            }}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-sm transition-colors"
-          >
-            Log Tag Details
-          </button>
-        </div>
-        
-        <div className="bg-blue-950/60 p-3 rounded-lg max-h-60 overflow-auto">
-          {tags.length > 0 ? (
-            <div className="grid grid-cols-3 gap-2 text-xs">
-              {tags.map((tag) => (
-                <div 
-                  key={tag.id} 
-                  className="bg-blue-800/40 p-2 rounded border border-blue-700/50 hover:bg-blue-700/40 transition-colors"
-                  onClick={() => console.log('Tag details:', tag)}
-                >
-                  <div className="font-mono text-blue-300 truncate">{tag.address}</div>
-                  <div className="font-bold text-white">{tag.tag}</div>
-                  <div className="text-blue-300 truncate">by: {tag.created_by}</div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="text-red-300 py-2">
-              No tags loaded. Try refreshing tags or check console for errors.
-            </div>
-          )}
-        </div>
-        
-        <div className="mt-3 flex space-x-2">
-          <button
-            onClick={() => {
-              if (window.testFetchTags) {
-                console.clear();
-                console.log("Manually triggering tag refresh...");
-                window.testFetchTags(true);
-              } else {
-                console.error("testFetchTags function not available on window object");
-              }
-            }}
-            className="bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded text-sm transition-colors flex items-center"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
-            </svg>
-            Refresh Tags
-          </button>
-          
-          <button
-            onClick={() => {
-              console.clear();
-              console.log("Testing direct fetch via curl command:");
-              
-              // Use the current window location with port
-              const currentPort = window.location.port;
-              const baseUrl = `${window.location.protocol}//${window.location.hostname}:${currentPort}`;
-              const apiUrl = `${baseUrl}/api/tags?address=all`;
-              
-              console.log(`Run this in your terminal: curl '${apiUrl}'`);
-              alert("Check console for curl command to test API directly");
-            }}
-            className="bg-purple-600 hover:bg-purple-500 text-white px-3 py-1 rounded text-sm transition-colors"
-          >
-            Show curl command
-          </button>
-          
-          <button
-            onClick={() => {
-              console.clear();
-              console.log("Testing debug endpoint:");
-
-              // Use the current window location with port
-              const currentPort = window.location.port;
-              const baseUrl = `${window.location.protocol}//${window.location.hostname}:${currentPort}`;
-              const debugUrl = `${baseUrl}/api/debug/tags`;
-              
-              console.log(`Run this in your terminal: curl '${debugUrl}'`);
-              
-              fetch(debugUrl)
-                .then(response => response.json())
-                .then(data => {
-                  console.log("Debug endpoint response:", data);
-                })
-                .catch(err => {
-                  console.error("Error fetching from debug endpoint:", err);
-                });
-            }}
-            className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-sm transition-colors"
-          >
-            Test Debug API
-          </button>
-        </div>
-      </div> */}
+      {/* Tag Management Section */}
       
+      
+      {/* Transaction History Section */}
       <div className="w-full mt-6 mb-10">
         <div className="flex justify-between items-center mb-6">
           <h2 className="text-xl font-semibold flex items-center relative">
@@ -1027,7 +1064,7 @@ export default function TransactionList({ transactions, isLoading, tags, setTags
             <div className="bg-[#160c33] rounded-xl shadow-[0_8px_30px_rgba(90,50,180,0.3)] p-6 border border-purple-800/50 w-full max-w-lg mx-4">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-semibold text-transparent bg-clip-text bg-gradient-to-r from-purple-200 to-white">
-                  Add Address Tag
+                  {isEditing ? 'Edit Address Tag' : 'Add Address Tag'}
                 </h3>
                 <button
                   onClick={closeTagModal}
@@ -1044,7 +1081,7 @@ export default function TransactionList({ transactions, isLoading, tags, setTags
                   <label className="block text-sm font-medium text-purple-300 mb-1">
                     Ethereum Address
                   </label>
-                  <div className="bg-[#1D0F45] border border-purple-700/30 rounded-md px-3 py-2 font-mono text-sm break-all">
+                  <div className={`bg-[#1D0F45] border border-purple-700/30 rounded-md px-3 py-2 font-mono text-sm break-all ${isEditing ? 'opacity-70' : ''}`}>
                     {addressToTag}
                   </div>
                 </div>
@@ -1081,453 +1118,21 @@ export default function TransactionList({ transactions, isLoading, tags, setTags
                   <div className="flex gap-2">
                     {/* Development mode debug buttons */}
                     {process.env.NODE_ENV === 'development' && (
-                      <>
-                        {/* 
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            setIsSubmittingTag(true);
-                            setTagError(null);
-                            try {
-                              if (!walletAddress || !isValidAddress(addressToTag) || !tagName.trim()) {
-                                throw new Error('Please provide a valid tag name and ensure the address is valid');
-                              }
-                              
-                              console.log('Using debug endpoint to create a tag directly');
-                              
-                              // Log the data being used
-                              console.log('Debug tag creation with:', {
-                                walletAddress,
-                                addressToTag,
-                                tagName
-                              });
-                              
-                              // First try new test endpoint which tests signature verification
-                              const currentPort = window.location.port;
-                              const baseUrl = `${window.location.protocol}//${window.location.hostname}:${currentPort}`;
-                              
-                              // Try the test endpoint first - this verifies signature approach works
-                              console.log('Trying test endpoint first to validate our approach');
-                              const testUrl = `${baseUrl}/api/debug/testSignedTag`;
-                              
-                              try {
-                                const testResponse = await fetch(testUrl);
-                                const testResult = await testResponse.json();
-                                console.log('Test endpoint result:', testResult);
-                                
-                                if (testResult.verification?.viemVerifyResult) {
-                                  console.log('✅ Test signature validation works! Our approach is correct.');
-                                } else {
-                                  console.warn('❌ Test signature validation failed. There may be an issue with our signature verification approach.');
-                                }
-                              } catch (testError) {
-                                console.error('Test endpoint error:', testError);
-                              }
-                              
-                              // Proceed with debug tag creation
-                              const debugUrl = `${baseUrl}/api/debug/directTagCreate?address=${encodeURIComponent(addressToTag)}&wallet=${encodeURIComponent(walletAddress)}&tagName=${encodeURIComponent(tagName)}`;
-                              
-                              console.log(`Calling debug endpoint: ${debugUrl}`);
-                              
-                              const response = await fetch(debugUrl);
-                              
-                              if (!response.ok) {
-                                const errorData = await response.json();
-                                throw new Error(errorData.message || 'Debug tag creation failed');
-                              }
-                              
-                              const result = await response.json();
-                              console.log('Debug tag creation result:', result);
-                              
-                              if (result.status === 'success' && result.tag) {
-                                // Add the new tag to the local state
-                                setTags([...tags, result.tag]);
-                                
-                                // Reset form
-                                closeTagModal();
-                                
-                                // Show a temporary success message
-                                alert('Tag created successfully via debug mode!');
-                              } else {
-                                throw new Error('Tag creation succeeded but no tag data returned');
-                              }
-                            } catch (err) {
-                              console.error('Debug tag creation error:', err);
-                              setTagError(err instanceof Error ? err.message : 'An unknown error occurred');
-                            } finally {
-                              setIsSubmittingTag(false);
-                            }
-                          }}
-                          className="px-4 py-2 text-sm bg-gradient-to-br from-green-600 to-green-700 hover:from-green-500 hover:to-green-600 text-white font-medium rounded-lg transition-all disabled:opacity-50"
-                          disabled={isSubmittingTag}
-                        >
-                          Debug Create
-                        </button>
-                        
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!walletAddress || !isValidAddress(addressToTag) || !tagName.trim()) {
-                              setTagError('Please provide a valid tag name and address for testing');
-                              return;
-                            }
-                            
-                            console.group('🧪 Signature Test Debug');
-                            console.log('Initiating signature verification test...');
-                            console.log('Current state:', {
-                              walletAddress,
-                              addressToTag,
-                              tagName,
-                              isConnected: !!walletAddress
-                            });
-                            
-                            // Create the message - MUST match server exactly
-                            const message = `I want to create a tag "${tagName}" for address ${addressToTag}`;
-                            console.log('Message to sign:', message);
-                            console.log('Message bytes:', new TextEncoder().encode(message).length);
-                            
-                            // Try simple validation of what we'll expect from recoverMessageAddress
-                            console.log('Testing if message is valid for viem recovery:', {
-                              isString: typeof message === 'string',
-                              hasContent: !!message.length
-                            });
-                            
-                            try {
-                              console.log('Attempting to sign the message with wallet...');
-                              // Reset any previous signature data
-                              debugInfo.current = {
-                                ...debugInfo.current,
-                                signAttempted: true,
-                                signatureReceived: false,
-                                verificationAttempted: false,
-                                submissionAttempted: false
-                              };
-                              
-                              // This will trigger our useEffect when the signature is returned
-                              signMessage({ message });
-                              console.log('Sign request sent to wallet - check for wallet popup');
-                              console.log('Debug info can be accessed via the browser console with: window.getTagDebugInfo()');
-                            } catch (err) {
-                              console.error('Signature test error:', err);
-                              debugInfo.current.lastError = err as any;
-                              setTagError(`Signature test error: ${err instanceof Error ? err.message : 'Unknown error'}`);
-                            } finally {
-                              console.groupEnd();
-                            }
-                          }}
-                          className="px-4 py-2 text-sm bg-gradient-to-br from-blue-600 to-blue-700 hover:from-blue-500 hover:to-blue-600 text-white font-medium rounded-lg transition-all"
-                        >
-                          Test Signature
-                        </button>
-                        
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            setIsSubmittingTag(true);
-                            setTagError(null);
-                            try {
-                              console.group('🧪 Test Wallet Creation Flow');
-                              console.log('Starting test wallet creation process...');
-                              
-                              if (!isValidAddress(addressToTag) || !tagName.trim()) {
-                                const error = 'Please provide a valid tag name and address';
-                                console.error('❌', error);
-                                setTagError(error);
-                                console.groupEnd();
-                                return;
-                              }
-                              
-                              console.log('Using direct signature approach with test wallet');
-                              
-                              // Generate a specific seed for consistent testing
-                              const testPrivateKey = "0x" + "1".repeat(64); // A simple private key for testing
-                              console.log('Using test private key:', testPrivateKey);
-                              
-                              // Create a test wallet
-                              try {
-                                const testWallet = new ethers.Wallet(testPrivateKey);
-                                console.log('Created test wallet with address:', testWallet.address);
-                                
-                                // Create the exact message format
-                                const message = `I want to create a tag "${tagName}" for address ${addressToTag}`;
-                                console.log('Message to sign:', message);
-                                
-                                // Sign the message with the test wallet
-                                const signature = await testWallet.signMessage(message);
-                                console.log('Generated signature:', signature);
-                                console.log('Signature length:', signature.length);
-                                console.log('Signature has 0x prefix:', signature.startsWith('0x'));
-                                
-                                // Create the tag with the test wallet and signature
-                                const tagData = {
-                                  address: addressToTag,
-                                  tag: tagName,
-                                  createdBy: testWallet.address,
-                                  signature: signature
-                                };
-                                
-                                console.log('Submitting tag with test wallet data:', tagData);
-                                
-                                // Submit to the main API endpoint
-                                const currentPort = window.location.port || '3000'; // Default to 3000 if empty
-                                console.log('Current port from window.location:', currentPort);
-                                const baseUrl = `${window.location.protocol}//${window.location.hostname}:${currentPort}`;
-                                const apiUrl = `${baseUrl}/api/tags`;
-                                
-                                console.log('API URL for submission:', apiUrl);
-                                
-                                // Test if the server is reachable
-                                try {
-                                  console.log('Testing API endpoint with a simple GET request first...');
-                                  const testResponse = await fetch(`${baseUrl}/api/debug/testSignedTag`);
-                                  console.log('Test endpoint response status:', testResponse.status);
-                                  if (testResponse.ok) {
-                                    console.log('✓ API server is reachable');
-                                  } else {
-                                    console.warn('⚠️ API server returned non-OK status:', testResponse.status);
-                                  }
-                                } catch (testError) {
-                                  console.error('❌ Error testing API endpoint:', testError);
-                                }
-                                
-                                // Now make the actual API request
-                                console.log('Making actual POST request to create tag...');
-                                const response = await fetch(apiUrl, {
-                                  method: 'POST',
-                                  headers: {
-                                    'Content-Type': 'application/json',
-                                  },
-                                  body: JSON.stringify(tagData),
-                                });
-                                
-                                console.log('API response status:', response.status);
-                                console.log('API response headers:', Object.fromEntries([...response.headers.entries()]));
-                                
-                                // Get the raw response text first
-                                const responseText = await response.text();
-                                console.log('Raw API response:', responseText);
-                                
-                                // Try to parse as JSON if possible
-                                let result;
-                                try {
-                                  if (responseText.trim().startsWith('{') || responseText.trim().startsWith('[')) {
-                                    result = JSON.parse(responseText);
-                                    console.log('Parsed API response:', result);
-                                  } else {
-                                    console.warn('Response is not valid JSON:', responseText);
-                                    result = { error: 'Not a valid JSON response' };
-                                  }
-                                } catch (parseError) {
-                                  console.error('Error parsing response as JSON:', parseError);
-                                  result = { error: 'Failed to parse response' };
-                                }
-                                
-                                if (!response.ok) {
-                                  throw new Error(result?.error || 'Failed to create tag with test wallet');
-                                }
-                                
-                                // Add the new tag to the local state - with fallback handling if format is unexpected
-                                if (result && result.address && result.tag) {
-                                  console.log('Adding tag to local state:', result);
-                                  setTags([...tags, result]);
-                                } else {
-                                  console.warn('Response format unexpected, creating tag object manually');
-                                  const newTag = {
-                                    id: `${testWallet.address.toLowerCase()}_${addressToTag.toLowerCase()}`,
-                                    address: addressToTag.toLowerCase(),
-                                    tag: tagName,
-                                    created_by: testWallet.address.toLowerCase(),
-                                    signature: 'verified',
-                                    created_at: new Date().toISOString()
-                                  };
-                                  console.log('Adding constructed tag to local state:', newTag);
-                                  setTags([...tags, newTag]);
-                                }
-                                
-                                // Reset form
-                                closeTagModal();
-                                
-                                // Show success
-                                alert('Tag created successfully with test wallet! This proves the API works.');
-                              } catch (walletError) {
-                                console.error('❌ Error creating test wallet or signing message:', walletError);
-                                throw walletError;
-                              }
-                            } catch (err) {
-                              console.error('❌ Test wallet tag creation error:', err);
-                              setTagError(err instanceof Error ? err.message : 'Unknown error');
-                            } finally {
-                              setIsSubmittingTag(false);
-                              console.groupEnd();
-                            }
-                          }}
-                          className="px-4 py-2 text-sm bg-gradient-to-br from-red-600 to-orange-600 hover:from-red-500 hover:to-orange-500 text-white font-medium rounded-lg transition-all"
-                        >
-                          Create with Test Wallet
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            try {
-                              console.group('🧪 Tag API Endpoint Tester');
-                              
-                              // Use default values if no input is provided
-                              const testAddress = addressToTag || '0x1234567890123456789012345678901234567890';
-                              const testTagName = tagName || 'APITesterTag';
-                              
-                              console.log('Using test values:', {
-                                address: testAddress,
-                                tagName: testTagName,
-                                walletAddress: walletAddress || 'No wallet connected'
-                              });
-                              
-                              console.log('Starting comprehensive API endpoint test');
-                              
-                              // Step 1: Get the current hostname and port
-                              const currentPort = window.location.port || '3000';
-                              const baseUrl = `${window.location.protocol}//${window.location.hostname}:${currentPort}`;
-                              console.log('Base URL for testing:', baseUrl);
-                              
-                              // Test different endpoints to see if any are being called incorrectly
-                              
-                              // 1. First check if test endpoint works (this should always work)
-                              console.log('STEP 1: Testing if test endpoint works');
-                              try {
-                                const testResponse = await fetch(`${baseUrl}/api/debug/testSignedTag`);
-                                const testStatus = testResponse.status;
-                                console.log('Test endpoint status:', testStatus);
-                                if (testStatus === 200) {
-                                  console.log('✅ Test endpoint works - server is reachable');
-                                } else {
-                                  console.error('❌ Test endpoint failed with status:', testStatus);
-                                  console.log('This suggests the server is not running or has errors');
-                                }
-                              } catch (error) {
-                                console.error('❌ Failed to reach test endpoint:', error);
-                              }
-                              
-                              // 2. Check if your inputs would be flagged as test data
-                              console.log('STEP 2: Checking if our input would be considered test data');
-                              const isTestAddressPattern = testAddress === '0x1234567890123456789012345678901234567890';
-                              const isTestTagPattern = testTagName === 'TestSignedTag' || testTagName.startsWith('Test');
-                              
-                              if (isTestAddressPattern || isTestTagPattern) {
-                                console.warn('⚠️ Your input appears to match test data patterns:');
-                                if (isTestAddressPattern) console.warn('- Address matches test pattern');
-                                if (isTestTagPattern) console.warn('- Tag name matches test pattern');
-                                console.log('This might be confusing the server-side validation');
-                              } else {
-                                console.log('✅ Your input appears to be normal user data (not test patterns)');
-                              }
-                              
-                              // 3. Fetch all existing tags to see what's in the database
-                              console.log('STEP 3: Fetching all existing tags from database');
-                              try {
-                                const allTagsResponse = await fetch(`${baseUrl}/api/tags?address=all`);
-                                const allTags = await allTagsResponse.json();
-                                console.log(`Found ${allTags.length} tags in database:`, allTags);
-                                
-                                // Check if we already have tags with this address/pattern
-                                const matchingTags = allTags.filter((tag: AddressTag) => 
-                                  tag.address?.toLowerCase() === testAddress?.toLowerCase()
-                                );
-                                
-                                if (matchingTags.length > 0) {
-                                  console.log(`Found ${matchingTags.length} existing tags for this address:`, matchingTags);
-                                } else {
-                                  console.log('No existing tags found for this address');
-                                }
-                                
-                                // Check for any test tags that might indicate problems
-                                const testTags = allTags.filter((tag: AddressTag) => 
-                                  tag.tag === 'TestSignedTag' || 
-                                  tag.address === '0x1234567890123456789012345678901234567890'
-                                );
-                                
-                                if (testTags.length > 0) {
-                                  console.warn('⚠️ Found test tags in the database that might indicate issues:', testTags);
-                                }
-                              } catch (error) {
-                                console.error('❌ Failed to fetch all tags:', error);
-                              }
-                              
-                              // 4. Create a unique tag name to track what actually gets saved
-                              console.log('STEP 4: Creating a uniquely identifiable tag name');
-                              const timestamp = Date.now();
-                              const uniqueTagName = `🔍API-${timestamp}`;
-                              console.log('Unique tag name for this test:', uniqueTagName);
-                              
-                              // 5. Submit a test tag using the test endpoint
-                              console.log('STEP 5: Creating a tag using the debug endpoint');
-                              try {
-                                const debugUrl = `${baseUrl}/api/debug/directTagCreate?address=${encodeURIComponent(testAddress)}&wallet=${encodeURIComponent(walletAddress || '0xTESTING')}&tagName=${encodeURIComponent(uniqueTagName)}`;
-                                console.log('Debug endpoint URL:', debugUrl);
-                                
-                                const debugResponse = await fetch(debugUrl);
-                                const debugResult = await debugResponse.json();
-                                console.log('Debug endpoint response:', debugResult);
-                                
-                                if (debugResult.status === 'success') {
-                                  console.log('✅ Debug endpoint successfully created tag');
-                                } else {
-                                  console.error('❌ Debug endpoint failed to create tag:', debugResult);
-                                }
-                              } catch (error) {
-                                console.error('❌ Error calling debug endpoint:', error);
-                              }
-                              
-                              // 6. Fetch all tags again to see what was actually saved
-                              console.log('STEP 6: Verifying what was saved to the database');
-                              try {
-                                const verifyResponse = await fetch(`${baseUrl}/api/tags?address=all`);
-                                const verifyTags = await verifyResponse.json();
-                                
-                                const newTag = verifyTags.find((tag: AddressTag) => tag.tag === uniqueTagName);
-                                if (newTag) {
-                                  console.log('✅ Successfully found the new tag in the database:', newTag);
-                                  console.log('Tag address saved:', newTag.address);
-                                  console.log('Address we wanted to tag:', testAddress);
-                                  console.log('Do they match?', newTag.address.toLowerCase() === testAddress.toLowerCase());
-                                } else {
-                                  console.error('❌ The new tag was not found in the database!');
-                                }
-                              } catch (error) {
-                                console.error('❌ Error verifying tag creation:', error);
-                              }
-                              
-                              console.log('📝 DIAGNOSIS SUMMARY:');
-                              console.log('If you see a mismatch between the address you want to tag and');
-                              console.log('what actually gets saved, there is likely an issue with the server-side code.');
-                              console.log('Check the server logs for any error messages or unexpected behavior.');
-                              
-                              console.groupEnd();
-                              
-                              alert('API endpoint test complete. Check the console for detailed results.');
-                            } catch (error) {
-                              console.error('Error in API test:', error);
-                              console.groupEnd();
-                            }
-                          }}
-                          className="px-4 py-2 text-sm bg-gradient-to-br from-cyan-600 to-teal-600 hover:from-cyan-500 hover:to-teal-500 text-white font-medium rounded-lg transition-all"
-                        >
-                          API Endpoint Tester
-                        </button>
-                        */}
-                      </>
+                      <>{/* ... existing development mode buttons ... */}</>
                     )}
                     <button
                       type="submit"
                       disabled={isSubmittingTag}
                       onClick={() => {
-                        console.group('📋 Create Tag Button Clicked');
-                        console.log('Create Tag button clicked with current state:', {
+                        console.group(`📋 ${isEditing ? 'Update' : 'Create'} Tag Button Clicked`);
+                        console.log(`${isEditing ? 'Update' : 'Create'} Tag button clicked with current state:`, {
                           walletConnected: !!walletAddress,
                           walletAddress,
                           addressToTag,
                           tagName,
                           isFormValid: !!(walletAddress && isValidAddress(addressToTag) && tagName.trim()),
-                          isSubmittingTag
+                          isSubmittingTag,
+                          isEditing
                         });
                         
                         // Add additional checks that could cause form submission issues
@@ -1547,8 +1152,8 @@ export default function TransactionList({ transactions, isLoading, tags, setTags
                           console.warn('⚠️ Submission already in progress - button should be disabled');
                         }
                         
-                        // Log the likely message to be signed
-                        if (walletAddress && isValidAddress(addressToTag) && tagName.trim()) {
+                        // Log the likely message to be signed (only for creation, not editing)
+                        if (!isEditing && walletAddress && isValidAddress(addressToTag) && tagName.trim()) {
                           const likelyMessage = `I want to create a tag "${tagName}" for address ${addressToTag}`;
                           console.log('Form is valid, likely message to sign:', likelyMessage);
                           console.log('Message bytes:', new TextEncoder().encode(likelyMessage).length);
@@ -1559,18 +1164,55 @@ export default function TransactionList({ transactions, isLoading, tags, setTags
                       }}
                       className="bg-gradient-to-br from-purple-600 to-indigo-700 hover:from-purple-500 hover:to-indigo-600 text-white font-medium py-2 px-4 rounded-lg transition-all duration-300 shadow-[0_4px_15px_rgba(90,50,180,0.2)] hover:shadow-[0_4px_20px_rgba(120,80,220,0.35)] disabled:opacity-50 disabled:hover:shadow-none"
                     >
-                      {isSubmittingTag ? 'Submitting...' : 'Create Tag'}
+                      {isSubmittingTag ? 'Submitting...' : isEditing ? 'Update Tag' : 'Create Tag'}
                     </button>
                   </div>
                 </div>
                 <p className="mt-3 text-xs text-center text-purple-300/70">
-                  This will require a signature from your wallet (no gas fees)
+                  {isEditing ? 'Updating a tag does not require a signature' : 'This will require a signature from your wallet (no gas fees)'}
                 </p>
               </form>
             </div>
           </div>
         )}
       </div>
+      
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmOpen && tagToDelete && (
+        <div className="fixed inset-0 flex items-center justify-center z-50 backdrop-blur-sm bg-[#0a051d]/70">
+          <div className="bg-[#160c33] rounded-xl shadow-[0_8px_30px_rgba(90,50,180,0.3)] p-6 border border-purple-800/50 w-full max-w-md mx-4">
+            <div className="flex flex-col items-center text-center mb-4">
+              <div className="w-16 h-16 rounded-full bg-red-900/20 flex items-center justify-center mb-4">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+              </div>
+              
+              <h3 className="text-xl font-semibold text-white mb-2">Delete Tag</h3>
+              
+              <p className="text-purple-200 mb-4">
+                Are you sure you want to delete the tag "<span className="font-semibold text-white">{tagToDelete.tag}</span>" for address <span className="font-mono text-white">{tagToDelete.address.slice(0, 6)}...{tagToDelete.address.slice(-4)}</span>?
+              </p>
+              
+              <div className="flex gap-3 w-full">
+                <button
+                  onClick={closeDeleteConfirmation}
+                  className="flex-1 px-4 py-2 bg-[#1D0F45] border border-purple-700/50 rounded-md hover:bg-purple-800/30 text-white transition-colors"
+                >
+                  Cancel
+                </button>
+                
+                <button
+                  onClick={() => handleDeleteTag(tagToDelete)}
+                  className="flex-1 px-4 py-2 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-medium rounded-md transition-all"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 } 

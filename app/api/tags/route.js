@@ -405,6 +405,204 @@ export async function DELETE(request) {
   }
 }
 
+// UPDATE a tag
+export async function PUT(request) {
+  try {
+    console.log('PUT /api/tags - Tag update request received');
+    
+    let requestBody = null;
+    try {
+      // Read raw request for debugging
+      const rawBody = await request.text();
+      console.log('Raw request body:', rawBody);
+      
+      // Try to parse the JSON
+      if (rawBody.trim()) {
+        requestBody = JSON.parse(rawBody);
+        console.log('Parsed request body:', requestBody);
+      } else {
+        console.error('Empty request body received');
+        return NextResponse.json(
+          { error: 'Empty request body' },
+          { status: 400, headers: corsHeaders }
+        );
+      }
+    } catch (parseError) {
+      console.error('Error parsing request JSON:', parseError);
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body', details: parseError.message },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+    
+    const { address, tag, createdBy, oldAddress } = requestBody || {};
+    
+    console.log('PUT /api/tags - Request to update tag:', { address, tag, createdBy, oldAddress });
+    
+    if (!address || !tag || !createdBy || !oldAddress) {
+      console.error('Missing required fields for tag update');
+      return NextResponse.json(
+        { error: 'Address, tag, createdBy, and oldAddress are required' },
+        { status: 400, headers: corsHeaders }
+      );
+    }
+    
+    // Normalize addresses
+    const normalizedCreator = createdBy.toLowerCase();
+    const normalizedOldAddress = oldAddress.toLowerCase();
+    const normalizedNewAddress = address.toLowerCase();
+    
+    // Only allow users to update their own tags
+    console.log(`Attempting to update tag where wallet_address=${normalizedCreator} and target_address=${normalizedOldAddress}`);
+    
+    // First check if the tag exists and is owned by this user
+    const { data: existingTag, error: checkError } = await supabase
+      .from('tags')
+      .select('*')
+      .eq('wallet_address', normalizedCreator)
+      .eq('target_address', normalizedOldAddress)
+      .single();
+    
+    if (checkError) {
+      console.error('Error finding tag to update:', checkError);
+      return NextResponse.json(
+        { error: 'Error finding tag', details: checkError.message },
+        { status: 500, headers: corsHeaders }
+      );
+    }
+    
+    if (!existingTag) {
+      console.error('Tag not found:', { wallet: normalizedCreator, target: normalizedOldAddress });
+      return NextResponse.json(
+        { error: 'Tag not found or you do not have permission to update it' },
+        { status: 404, headers: corsHeaders }
+      );
+    }
+    
+    console.log('Found existing tag for update:', existingTag);
+    
+    // Prepare the updated tag data
+    const updatedTagData = {
+      wallet_address: normalizedCreator,
+      target_address: normalizedNewAddress,
+      tag_name: tag,
+      created_at: existingTag.created_at // Keep the original creation date
+    };
+    
+    console.log('Updating tag with data:', updatedTagData);
+    
+    try {
+      // If the address is not changing, use an update
+      if (normalizedOldAddress === normalizedNewAddress) {
+        const { data: updatedData, error: updateError } = await supabase
+          .from('tags')
+          .update(updatedTagData)
+          .eq('wallet_address', normalizedCreator)
+          .eq('target_address', normalizedOldAddress)
+          .select();
+        
+        if (updateError) {
+          console.error('Error updating tag:', updateError);
+          return NextResponse.json(
+            { error: updateError.message || 'Failed to update tag' },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+        
+        if (!updatedData || updatedData.length === 0) {
+          console.error('No data returned from update operation');
+          return NextResponse.json(
+            { error: 'Update operation did not return any data' },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+        
+        console.log('Tag successfully updated:', updatedData);
+        
+        // Format the response to match client expectations
+        const responseData = {
+          id: `${normalizedCreator}_${normalizedNewAddress}`,
+          address: normalizedNewAddress,
+          tag: tag,
+          created_by: normalizedCreator,
+          signature: 'verified',
+          created_at: updatedData[0].created_at
+        };
+        
+        console.log('Sending successful response:', responseData);
+        return NextResponse.json(responseData, { headers: corsHeaders });
+      } 
+      // If the address is changing, we need to delete the old one and create a new one
+      else {
+        // Begin by deleting the old tag
+        const { error: deleteError } = await supabase
+          .from('tags')
+          .delete()
+          .eq('wallet_address', normalizedCreator)
+          .eq('target_address', normalizedOldAddress);
+        
+        if (deleteError) {
+          console.error('Error deleting old tag during update:', deleteError);
+          return NextResponse.json(
+            { error: deleteError.message || 'Failed to update tag' },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+        
+        // Then create the new tag
+        const { data: newTagData, error: insertError } = await supabase
+          .from('tags')
+          .insert(updatedTagData)
+          .select();
+        
+        if (insertError) {
+          console.error('Error creating new tag during update:', insertError);
+          return NextResponse.json(
+            { error: insertError.message || 'Failed to update tag' },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+        
+        if (!newTagData || newTagData.length === 0) {
+          console.error('No data returned from insert operation');
+          return NextResponse.json(
+            { error: 'Insert operation did not return any data' },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+        
+        console.log('Tag successfully updated with address change:', newTagData);
+        
+        // Format the response to match client expectations
+        const responseData = {
+          id: `${normalizedCreator}_${normalizedNewAddress}`,
+          address: normalizedNewAddress,
+          tag: tag,
+          created_by: normalizedCreator,
+          signature: 'verified',
+          created_at: newTagData[0].created_at
+        };
+        
+        console.log('Sending successful response:', responseData);
+        return NextResponse.json(responseData, { headers: corsHeaders });
+      }
+    } catch (dbError) {
+      console.error('Database operation error:', dbError);
+      return NextResponse.json(
+        { error: 'Database operation failed', details: dbError.message },
+        { status: 500, headers: corsHeaders }
+      );
+    }
+  } catch (error) {
+    console.error('Unexpected error updating tag:', error);
+    // Ensure we always return a valid JSON response even for unexpected errors
+    return NextResponse.json(
+      { error: 'Failed to update tag', details: error.message || 'Unknown error' },
+      { status: 500, headers: corsHeaders }
+    );
+  }
+}
+
 // Helper function to detect test data patterns
 function checkForTestDataPatterns(address, tag, createdBy, signature) {
   const issues = [];

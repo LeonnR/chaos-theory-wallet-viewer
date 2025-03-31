@@ -506,14 +506,16 @@ export default function Home() {
                     }
                   </div>
                   
+                  {/* 
                   <button 
                     onClick={testWebSocket}
                     className="p-2 bg-purple-800/50 hover:bg-purple-700/50 text-white rounded-lg text-sm transition-colors"
                   >
                     Test WebSocket Connection
                   </button>
+                  */}
                   
-                  <button 
+                  {/* <button 
                     onClick={() => debouncedFetchTags()}
                     className="p-2 bg-purple-800/50 hover:bg-purple-700/50 text-white rounded-lg text-sm transition-colors flex items-center justify-center disabled:opacity-50"
                     disabled={isTagsLoading}
@@ -533,7 +535,7 @@ export default function Home() {
                     className="mt-2 p-2 bg-blue-700/50 hover:bg-blue-600/50 text-white rounded-lg text-sm"
                   >
                     Test API Call
-                  </button>
+                  </button> */}
                 </div>
               </div>
             </div>
