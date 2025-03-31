@@ -7,6 +7,7 @@ import WalletConnect from '@/components/WalletConnect'
 import { Transaction, AddressTag } from '@/types'
 import { io } from 'socket.io-client'
 import { SOCKET_EVENTS, socketConfig } from '@/app/socket-config'
+import React from 'react'
 
 export default function Home() {
   const { address, isConnected } = useAccount()
@@ -14,9 +15,89 @@ export default function Home() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [tags, setTags] = useState<AddressTag[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [isTagsLoading, setIsTagsLoading] = useState(false)
   const [socket, setSocket] = useState<any>(null)
   const [connectionStatus, setConnectionStatus] = useState<string>('disconnected')
   const [error, setError] = useState<string | null>(null)
+  
+  // Add a ref to track if we've already tried to fetch tags to prevent infinite loops
+  const hasAttemptedTagsFetch = React.useRef(false)
+  
+  // Add a debounce function for the refresh button
+  const debounce = (fn: Function, ms = 1000) => {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    return function(this: any, ...args: any[]) {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => fn.apply(this, args), ms);
+    };
+  };
+  
+  // Function to fetch address tags from the API
+  const fetchTags = async (forceRefresh = false) => {
+    if (tags.length > 0 && !forceRefresh) {
+      console.log('Using cached tags:', tags.length);
+      return tags;
+    }
+    
+    try {
+      setIsTagsLoading(true);
+      
+      // Use the current URL with port to avoid CORS issues
+      const baseUrl = `${window.location.protocol}//${window.location.hostname}:${window.location.port}`;
+      
+      // IMPORTANT CHANGE: Use the debug/tags endpoint which correctly returns tags
+      // from the database instead of the regular endpoint which returns an empty array
+      const apiUrl = `${baseUrl}/api/debug/tags`;
+      
+      console.log(`Fetching tags from URL: ${apiUrl}`);
+      
+      const response = await fetch(apiUrl);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch tags: ${response.status}`);
+      }
+      
+      const responseData = await response.json();
+      
+      // The debug endpoint returns a different structure, extract the formatted tags
+      let fetchedTags = [];
+      if (responseData.formatted_tags && Array.isArray(responseData.formatted_tags.items)) {
+        console.log(`Found ${responseData.formatted_tags.items.length} tags using debug endpoint`);
+        fetchedTags = responseData.formatted_tags.items;
+      } else if (Array.isArray(responseData)) {
+        // Handle regular endpoint response format for backward compatibility
+        console.log(`Found ${responseData.length} tags using regular endpoint`);
+        fetchedTags = responseData;
+      } else {
+        console.warn('Unexpected tags response format:', responseData);
+        fetchedTags = [];
+      }
+      
+      console.log('Fetched tags:', fetchedTags.length);
+      setTags(fetchedTags);
+      setIsTagsLoading(false);
+      
+      // Expose for debug purposes
+      if (typeof window !== 'undefined') {
+        window.getTagsState = () => [...tags];
+      }
+      
+      return fetchedTags;
+    } catch (error) {
+      console.error('Error fetching tags:', error);
+      setIsTagsLoading(false);
+      return [];
+    }
+  };
+  
+  // Create a debounced version of fetchTags
+  const debouncedFetchTags = React.useCallback(
+    debounce(() => {
+      console.log('Debounced fetchTags called');
+      fetchTags();
+    }, 1000),
+    [fetchTags]  // Include fetchTags in the dependency array
+  );
   
   // Initialize Socket.io connection
   useEffect(() => {
@@ -82,6 +163,7 @@ export default function Home() {
   useEffect(() => {
     if (isConnected && address && socket) {
       setIsLoading(true);
+      setIsTagsLoading(true);
       setError(null);
       
       try {
@@ -162,11 +244,14 @@ export default function Home() {
           socket.emit(SOCKET_EVENTS.WALLET_CONNECT, address);
         });
         
-        // Fetch transactions from Supabase
-        fetchStoredTransactions();
-        
-        // Fetch tags
-        fetchTags();
+        // Fetch tags first, then transactions to ensure correct order
+        fetchTags().then(() => {
+          fetchStoredTransactions();
+        }).catch(err => {
+          console.error('Error in tag/transaction loading sequence:', err);
+          // Still try to fetch transactions even if tags fail
+          fetchStoredTransactions();
+        });
       } catch (err) {
         console.error('Error in wallet connection effect:', err);
         setError(`Connection error: ${err instanceof Error ? err.message : String(err)}`);
@@ -223,36 +308,6 @@ export default function Home() {
     }
   }, [isConnected, socket]);
   
-  const fetchTags = async () => {
-    try {
-      console.log('Fetching tags for address:', address);
-      const response = await fetch(`/api/tags?address=${address}`)
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to fetch tags');
-      }
-      
-      const data = await response.json()
-      console.log(`Fetched ${data.length} tags`);
-      
-      // Format tags to match our expected format if needed
-      const formattedTags: AddressTag[] = data.map((tag: any) => ({
-        id: tag.id,
-        address: tag.address,
-        tag: tag.tag,
-        created_by: tag.created_by,
-        signature: tag.signature,
-        created_at: tag.created_at
-      }));
-      
-      setTags(formattedTags)
-    } catch (error) {
-      console.error('Failed to fetch address tags:', error)
-      setError(`Failed to fetch tags: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
-  
   const testWebSocket = () => {
     console.log('Testing direct WebSocket connection...');
     
@@ -279,6 +334,62 @@ export default function Home() {
       console.log('Direct WebSocket connection closed');
     };
   };
+  
+  // Fix the useEffect to avoid infinite loops
+  useEffect(() => {
+    // Only attempt to fetch tags once when connected
+    if (isConnected && address && tags.length === 0 && !isTagsLoading && !hasAttemptedTagsFetch.current) {
+      console.log('Connected with no tags, fetching tags (first attempt)...');
+      hasAttemptedTagsFetch.current = true;
+      fetchTags();
+    }
+  }, [isConnected, address, isTagsLoading, tags.length, fetchTags]); // Include fetchTags and tags.length
+  
+  // Add debug logging and expose function to window
+  useEffect(() => {
+    console.log('Setting up test functions on window object...');
+    
+    // Expose the fetch tags function
+    window.testFetchTags = (force = false) => {
+      console.log(`🔍 Manually calling fetchTags(${force})...`);
+      return fetchTags(force)
+        .then(() => {
+          console.log('✅ fetchTags completed successfully');
+          console.log(`📊 Current tags state (${tags.length} tags):`, tags);
+          return tags;
+        })
+        .catch(err => {
+          console.error('❌ fetchTags failed:', err);
+          throw err;
+        });
+    };
+    
+    // Expose a function to check the current state
+    window.getTagsState = () => {
+      console.log(`📊 Current tags state (${tags.length} tags):`, tags);
+      return tags;
+    };
+    
+    window.checkTagsStatus = () => {
+      console.log({
+        tagsCount: tags.length,
+        isTagsLoading,
+        hasAttemptedFetch: hasAttemptedTagsFetch.current
+      });
+    };
+    
+    console.log('✅ Test functions added to window object. Try running:');
+    console.log('   window.testFetchTags()');
+    console.log('   window.getTagsState()');
+    console.log('   window.checkTagsStatus()');
+    
+    return () => {
+      console.log('Cleaning up test functions...');
+      delete window.testFetchTags;
+      delete window.getTagsState;
+      delete window.checkTagsStatus;
+    };
+  }, [fetchTags, tags, isTagsLoading]);
   
   return (
     <div className="flex flex-col min-h-screen bg-[#0a051d] text-white relative" style={{ margin: 0, padding: 0, backgroundImage: 'radial-gradient(circle at 25% 10%, rgba(120, 40, 200, 0.15) 0%, transparent 45%)' }}>
@@ -401,13 +512,35 @@ export default function Home() {
                   >
                     Test WebSocket Connection
                   </button>
+                  
+                  <button 
+                    onClick={() => debouncedFetchTags()}
+                    className="p-2 bg-purple-800/50 hover:bg-purple-700/50 text-white rounded-lg text-sm transition-colors flex items-center justify-center disabled:opacity-50"
+                    disabled={isTagsLoading}
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
+                    </svg>
+                    Refresh Tags {isTagsLoading && '(Loading...)'}
+                  </button>
+                  
+                  <button 
+                    onClick={() => {
+                      console.clear();
+                      console.log("Manual test initiated");
+                      fetchTags(true);
+                    }}
+                    className="mt-2 p-2 bg-blue-700/50 hover:bg-blue-600/50 text-white rounded-lg text-sm"
+                  >
+                    Test API Call
+                  </button>
                 </div>
               </div>
             </div>
             
             <TransactionList 
               transactions={transactions} 
-              isLoading={isLoading} 
+              isLoading={isLoading || isTagsLoading}
               tags={tags}
               setTags={setTags}
             />
@@ -425,9 +558,12 @@ export default function Home() {
   )
 }
 
-// Add TypeScript augmentation for the Window interface
+// Update your existing global Window interface augmentation
 declare global {
   interface Window {
-    transactionSocket?: WebSocket
+    transactionSocket?: WebSocket;
+    testFetchTags?: (force?: boolean) => Promise<AddressTag[]>;
+    getTagsState?: () => AddressTag[];
+    checkTagsStatus?: () => void;
   }
 }
