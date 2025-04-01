@@ -369,6 +369,105 @@ function subscribeToAddressTransactions(address, callback) {
   };
 }
 
+// Cache to store transactions to avoid duplicates
+const transactionCache = new Map(); // Map of wallet address -> Set of transaction hashes
+
+// Function to get latest transactions and emit new ones
+async function pollEtherscanForNewTransactions(address, socketId) {
+  try {
+    if (!ETHERSCAN_API_KEY) {
+      console.error('No Etherscan API key available for polling');
+      return;
+    }
+    
+    const normalizedAddress = address.toLowerCase();
+    console.log(`Polling Etherscan for new transactions for ${normalizedAddress}...`);
+    
+    // Initialize cache for this address if it doesn't exist
+    if (!transactionCache.has(normalizedAddress)) {
+      transactionCache.set(normalizedAddress, new Set());
+    }
+    
+    // Get recent transactions (limit to last 10 for efficiency)
+    const transactions = await getEtherscanTransactions(normalizedAddress, 10);
+    const addressCache = transactionCache.get(normalizedAddress);
+    let newTransactionsFound = false;
+    
+    // Check each transaction and emit if new
+    for (const tx of transactions) {
+      if (!addressCache.has(tx.hash)) {
+        // New transaction found
+        console.log(`New transaction found for ${normalizedAddress}: ${tx.hash}`);
+        addressCache.add(tx.hash);
+        newTransactionsFound = true;
+        
+        // Find and notify the client associated with this address
+        const socket = io.sockets.sockets.get(socketId);
+        if (socket) {
+          console.log(`Emitting new transaction ${tx.hash} to socket ${socketId}`);
+          socket.emit(SOCKET_EVENTS.NEW_TRANSACTION, tx);
+        } else {
+          console.log(`Socket ${socketId} not found for address ${address}`);
+        }
+      }
+    }
+    
+    if (!newTransactionsFound) {
+      console.log(`No new transactions found for ${normalizedAddress}`);
+    }
+    
+    // Limit cache size to prevent memory issues (keep the latest 100 transactions)
+    if (addressCache.size > 100) {
+      const toRemove = addressCache.size - 100;
+      console.log(`Trimming transaction cache for ${normalizedAddress} by ${toRemove} items`);
+      const iterator = addressCache.values();
+      for (let i = 0; i < toRemove; i++) {
+        addressCache.delete(iterator.next().value);
+      }
+    }
+    
+    return transactions;
+  } catch (error) {
+    console.error(`Error polling Etherscan for ${address}:`, error);
+    return [];
+  }
+}
+
+// Track polling intervals for each client
+const pollingIntervals = new Map();
+
+// Start polling for a specific client
+function startEtherscanPolling(address, socketId) {
+  if (pollingIntervals.has(socketId)) {
+    console.log(`Polling already active for ${socketId}, skipping`);
+    return;
+  }
+  
+  console.log(`Starting Etherscan polling for ${address} (socket: ${socketId})`);
+  
+  // Poll immediately once
+  pollEtherscanForNewTransactions(address, socketId);
+  
+  // Then set up interval (poll every 20 seconds to respect API rate limits)
+  const intervalId = setInterval(() => {
+    pollEtherscanForNewTransactions(address, socketId);
+  }, 20000);
+  
+  // Store the interval ID for cleanup
+  pollingIntervals.set(socketId, intervalId);
+  return intervalId;
+}
+
+// Stop polling for a specific client
+function stopEtherscanPolling(socketId) {
+  const intervalId = pollingIntervals.get(socketId);
+  if (intervalId) {
+    console.log(`Stopping Etherscan polling for socket ${socketId}`);
+    clearInterval(intervalId);
+    pollingIntervals.delete(socketId);
+  }
+}
+
 // Initialize providers
 initProviders();
 
@@ -500,25 +599,44 @@ app.prepare().then(() => {
         const transactions = await getEtherscanTransactions(normalizedAddress, 50);
         console.log(`Sending ${transactions.length} transactions to client`);
         
+        // Initialize the transaction cache with current transactions
+        if (!transactionCache.has(normalizedAddress)) {
+          const addressCache = new Set();
+          transactions.forEach(tx => addressCache.add(tx.hash));
+          transactionCache.set(normalizedAddress, addressCache);
+          console.log(`Initialized transaction cache for ${normalizedAddress} with ${addressCache.size} transactions`);
+        }
+        
         // Send transaction history to client
         socket.emit(SOCKET_EVENTS.TRANSACTION_HISTORY, transactions);
         
-        // Set up transaction streaming
+        // Set up transaction streaming via both methods
         let unsubscribe;
         
         try {
-          // Set up transaction streaming via WebSocket or HTTP polling
+          // 1. Set up blockchain provider subscription (if available)
           console.log(`Setting up real-time transaction subscription for ${address}`);
           unsubscribe = subscribeToAddressTransactions(normalizedAddress, (newTx) => {
-            console.log(`Sending new transaction to ${socket.id}: ${newTx.hash}`);
+            console.log(`Sending new transaction from blockchain to ${socket.id}: ${newTx.hash}`);
             socket.emit(SOCKET_EVENTS.NEW_TRANSACTION, newTx);
+            
+            // Also add to cache to avoid duplicates with Etherscan polling
+            const addressCache = transactionCache.get(normalizedAddress);
+            if (addressCache) {
+              addressCache.add(newTx.hash);
+            }
           });
         } catch (subscriptionError) {
           console.error(`Error setting up transaction subscription: ${subscriptionError.message}`);
           socket.emit(SOCKET_EVENTS.CONNECTION_ERROR, { 
-            message: `Could not set up transaction notifications: ${subscriptionError.message}`
+            message: `Could not set up blockchain transaction notifications: ${subscriptionError.message}`
           });
+          unsubscribe = null;
         }
+        
+        // 2. Also set up Etherscan polling as a backup/additional method
+        console.log(`Setting up Etherscan polling for ${address}`);
+        startEtherscanPolling(normalizedAddress, socket.id);
         
         // Store unsubscribe function if we have one
         if (unsubscribe) {
@@ -538,6 +656,10 @@ app.prepare().then(() => {
         if (unsubscribe && typeof unsubscribe === 'function') {
           unsubscribe();
         }
+        
+        // Also stop Etherscan polling
+        stopEtherscanPolling(socket.id);
+        
         subscriptions.delete(socket.id);
         connectedClients.delete(socket.id);
         console.log(`Client ${socket.id} disconnected`);
@@ -549,6 +671,10 @@ app.prepare().then(() => {
       if (unsubscribe && typeof unsubscribe === 'function') {
         unsubscribe();
       }
+      
+      // Also stop Etherscan polling
+      stopEtherscanPolling(socket.id);
+      
       subscriptions.delete(socket.id);
       connectedClients.delete(socket.id);
       console.log(`Wallet disconnected from socket ${socket.id}`);

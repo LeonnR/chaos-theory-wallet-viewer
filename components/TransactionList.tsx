@@ -526,14 +526,14 @@ export default function TransactionList({ transactions, isLoading, tags, setTags
   }, [signatureError]);
   
   // Function to handle editing a tag
-  const handleEditTag = (tag: AddressTag) => {
-    setTagToEdit(tag);
-    setAddressToTag(tag.address);
-    setTagName(tag.tag);
-    setTagError(null);
-    setIsEditing(true);
-    setTagModalOpen(true);
-  };
+  // const handleEditTag = (tag: AddressTag) => {
+  //   setTagToEdit(tag);
+  //   setAddressToTag(tag.address);
+  //   setTagName(tag.tag);
+  //   setTagError(null);
+  //   setIsEditing(true);
+  //   setTagModalOpen(true);
+  // };
   
   // Function to update a tag
   const updateTag = async () => {

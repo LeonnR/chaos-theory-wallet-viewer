@@ -188,48 +188,12 @@ export default function Home() {
           console.log(`Received ${data.length} transactions from server`);
           setTransactions(data);
           setIsLoading(false);
-          
-          // Store transactions in Supabase
-          // if (data.length > 0) {
-          //   try {
-          //     // Use the same URL as the socket connection to ensure we hit the right server
-          //     const apiUrl = window.location.hostname === 'localhost' 
-          //       ? `http://${window.location.hostname}:3000/api/transactions`  // Use socket server port
-          //       : '/api/transactions';  // Production: use relative path
-              
-          //     await fetch(apiUrl, {
-          //       method: 'POST',
-          //       headers: { 'Content-Type': 'application/json' },
-          //       body: JSON.stringify(data)
-          //     });
-          //     console.log('Transactions stored in database');
-          //   } catch (dbError) {
-          //     console.error('Failed to store transactions in database:', dbError);
-          //   }
-          // }
         });
         
         // Listen for new transactions
         socket.on(SOCKET_EVENTS.NEW_TRANSACTION, async (newTransaction: Transaction) => {
           console.log('Received new transaction:', newTransaction.hash);
           setTransactions(prev => [newTransaction, ...prev]);
-          
-          // Store new transaction in Supabase
-          // try {
-          //   // Use the same URL as the socket connection to ensure we hit the right server
-          //   const apiUrl = window.location.hostname === 'localhost' 
-          //     ? `http://${window.location.hostname}:3000/api/transactions`  // Use socket server port
-          //     : '/api/transactions';  // Production: use relative path
-            
-          //   await fetch(apiUrl, {
-          //     method: 'POST',
-          //     headers: { 'Content-Type': 'application/json' },
-          //     body: JSON.stringify(newTransaction)
-          //   });
-          //   console.log('New transaction stored in database');
-          // } catch (dbError) {
-          //   console.error('Failed to store new transaction in database:', dbError);
-          // }
         });
         
         // Handle connection errors
@@ -243,15 +207,7 @@ export default function Home() {
           console.log('Socket reconnected, resending wallet address');
           socket.emit(SOCKET_EVENTS.WALLET_CONNECT, address);
         });
-        
-        // Fetch tags first, then transactions to ensure correct order
-        // fetchTags().then(() => {
-        //   fetchStoredTransactions();
-        // }).catch(err => {
-        //   console.error('Error in tag/transaction loading sequence:', err);
-        //   // Still try to fetch transactions even if tags fail
-        //   fetchStoredTransactions();
-        // });
+
       } catch (err) {
         console.error('Error in wallet connection effect:', err);
         setError(`Connection error: ${err instanceof Error ? err.message : String(err)}`);
@@ -270,35 +226,6 @@ export default function Home() {
     }
     
   }, [isConnected, address, socket]);
-  
-  // Fetch transactions stored in Supabase
-  // const fetchStoredTransactions = async () => {
-  //   if (!address) return;
-    
-  //   try {
-  //     setIsLoading(true);
-  //     console.log('Fetching stored transactions for address:', address);
-      
-  //     const response = await fetch(`/api/transactions?address=${address}`);
-  //     if (!response.ok) {
-  //       throw new Error('Failed to fetch stored transactions');
-  //     }
-      
-  //     const data = await response.json();
-  //     console.log(`Fetched ${data.length} stored transactions from database`);
-      
-  //     if (data.length > 0) {
-  //       // Only update state if we got transactions and no socket transactions yet
-  //       if (transactions.length === 0) {
-  //         setTransactions(data);
-  //       }
-  //       setIsLoading(false);
-  //     }
-  //   } catch (error) {
-  //     console.error('Error fetching stored transactions:', error);
-  //     // Don't set error state here as we might still get transactions from socket
-  //   }
-  // }
   
   // Disconnect socket when wallet disconnects
   useEffect(() => {
@@ -347,7 +274,6 @@ export default function Home() {
   
   // Add debug logging and expose function to window
   useEffect(() => {
-    console.log('Setting up test functions on window object...');
     
     // Expose the fetch tags function
     window.testFetchTags = (force = false) => {
@@ -378,13 +304,8 @@ export default function Home() {
       });
     };
     
-    console.log('✅ Test functions added to window object. Try running:');
-    console.log('   window.testFetchTags()');
-    console.log('   window.getTagsState()');
-    console.log('   window.checkTagsStatus()');
     
     return () => {
-      console.log('Cleaning up test functions...');
       delete window.testFetchTags;
       delete window.getTagsState;
       delete window.checkTagsStatus;
@@ -505,37 +426,6 @@ export default function Home() {
                       `Loaded ${transactions.length} transactions`
                     }
                   </div>
-                  
-                  {/* 
-                  <button 
-                    onClick={testWebSocket}
-                    className="p-2 bg-purple-800/50 hover:bg-purple-700/50 text-white rounded-lg text-sm transition-colors"
-                  >
-                    Test WebSocket Connection
-                  </button>
-                  */}
-                  
-                  {/* <button 
-                    onClick={() => debouncedFetchTags()}
-                    className="p-2 bg-purple-800/50 hover:bg-purple-700/50 text-white rounded-lg text-sm transition-colors flex items-center justify-center disabled:opacity-50"
-                    disabled={isTagsLoading}
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M4 2a1 1 0 011 1v2.101a7.002 7.002 0 0111.601 2.566 1 1 0 11-1.885.666A5.002 5.002 0 005.999 7H9a1 1 0 010 2H4a1 1 0 01-1-1V3a1 1 0 011-1zm.008 9.057a1 1 0 011.276.61A5.002 5.002 0 0014.001 13H11a1 1 0 110-2h5a1 1 0 011 1v5a1 1 0 11-2 0v-2.101a7.002 7.002 0 01-11.601-2.566 1 1 0 01.61-1.276z" clipRule="evenodd" />
-                    </svg>
-                    Refresh Tags {isTagsLoading && '(Loading...)'}
-                  </button>
-                  
-                  <button 
-                    onClick={() => {
-                      console.clear();
-                      console.log("Manual test initiated");
-                      fetchTags(true);
-                    }}
-                    className="mt-2 p-2 bg-blue-700/50 hover:bg-blue-600/50 text-white rounded-lg text-sm"
-                  >
-                    Test API Call
-                  </button> */}
                 </div>
               </div>
             </div>
