@@ -190,23 +190,23 @@ export default function Home() {
           setIsLoading(false);
           
           // Store transactions in Supabase
-          if (data.length > 0) {
-            try {
-              // Use the same URL as the socket connection to ensure we hit the right server
-              const apiUrl = window.location.hostname === 'localhost' 
-                ? `http://${window.location.hostname}:3000/api/transactions`  // Use socket server port
-                : '/api/transactions';  // Production: use relative path
+          // if (data.length > 0) {
+          //   try {
+          //     // Use the same URL as the socket connection to ensure we hit the right server
+          //     const apiUrl = window.location.hostname === 'localhost' 
+          //       ? `http://${window.location.hostname}:3000/api/transactions`  // Use socket server port
+          //       : '/api/transactions';  // Production: use relative path
               
-              await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-              });
-              console.log('Transactions stored in database');
-            } catch (dbError) {
-              console.error('Failed to store transactions in database:', dbError);
-            }
-          }
+          //     await fetch(apiUrl, {
+          //       method: 'POST',
+          //       headers: { 'Content-Type': 'application/json' },
+          //       body: JSON.stringify(data)
+          //     });
+          //     console.log('Transactions stored in database');
+          //   } catch (dbError) {
+          //     console.error('Failed to store transactions in database:', dbError);
+          //   }
+          // }
         });
         
         // Listen for new transactions
@@ -215,21 +215,21 @@ export default function Home() {
           setTransactions(prev => [newTransaction, ...prev]);
           
           // Store new transaction in Supabase
-          try {
-            // Use the same URL as the socket connection to ensure we hit the right server
-            const apiUrl = window.location.hostname === 'localhost' 
-              ? `http://${window.location.hostname}:3000/api/transactions`  // Use socket server port
-              : '/api/transactions';  // Production: use relative path
+          // try {
+          //   // Use the same URL as the socket connection to ensure we hit the right server
+          //   const apiUrl = window.location.hostname === 'localhost' 
+          //     ? `http://${window.location.hostname}:3000/api/transactions`  // Use socket server port
+          //     : '/api/transactions';  // Production: use relative path
             
-            await fetch(apiUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(newTransaction)
-            });
-            console.log('New transaction stored in database');
-          } catch (dbError) {
-            console.error('Failed to store new transaction in database:', dbError);
-          }
+          //   await fetch(apiUrl, {
+          //     method: 'POST',
+          //     headers: { 'Content-Type': 'application/json' },
+          //     body: JSON.stringify(newTransaction)
+          //   });
+          //   console.log('New transaction stored in database');
+          // } catch (dbError) {
+          //   console.error('Failed to store new transaction in database:', dbError);
+          // }
         });
         
         // Handle connection errors
@@ -245,13 +245,13 @@ export default function Home() {
         });
         
         // Fetch tags first, then transactions to ensure correct order
-        fetchTags().then(() => {
-          fetchStoredTransactions();
-        }).catch(err => {
-          console.error('Error in tag/transaction loading sequence:', err);
-          // Still try to fetch transactions even if tags fail
-          fetchStoredTransactions();
-        });
+        // fetchTags().then(() => {
+        //   fetchStoredTransactions();
+        // }).catch(err => {
+        //   console.error('Error in tag/transaction loading sequence:', err);
+        //   // Still try to fetch transactions even if tags fail
+        //   fetchStoredTransactions();
+        // });
       } catch (err) {
         console.error('Error in wallet connection effect:', err);
         setError(`Connection error: ${err instanceof Error ? err.message : String(err)}`);
@@ -272,33 +272,33 @@ export default function Home() {
   }, [isConnected, address, socket]);
   
   // Fetch transactions stored in Supabase
-  const fetchStoredTransactions = async () => {
-    if (!address) return;
+  // const fetchStoredTransactions = async () => {
+  //   if (!address) return;
     
-    try {
-      setIsLoading(true);
-      console.log('Fetching stored transactions for address:', address);
+  //   try {
+  //     setIsLoading(true);
+  //     console.log('Fetching stored transactions for address:', address);
       
-      const response = await fetch(`/api/transactions?address=${address}`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch stored transactions');
-      }
+  //     const response = await fetch(`/api/transactions?address=${address}`);
+  //     if (!response.ok) {
+  //       throw new Error('Failed to fetch stored transactions');
+  //     }
       
-      const data = await response.json();
-      console.log(`Fetched ${data.length} stored transactions from database`);
+  //     const data = await response.json();
+  //     console.log(`Fetched ${data.length} stored transactions from database`);
       
-      if (data.length > 0) {
-        // Only update state if we got transactions and no socket transactions yet
-        if (transactions.length === 0) {
-          setTransactions(data);
-        }
-        setIsLoading(false);
-      }
-    } catch (error) {
-      console.error('Error fetching stored transactions:', error);
-      // Don't set error state here as we might still get transactions from socket
-    }
-  }
+  //     if (data.length > 0) {
+  //       // Only update state if we got transactions and no socket transactions yet
+  //       if (transactions.length === 0) {
+  //         setTransactions(data);
+  //       }
+  //       setIsLoading(false);
+  //     }
+  //   } catch (error) {
+  //     console.error('Error fetching stored transactions:', error);
+  //     // Don't set error state here as we might still get transactions from socket
+  //   }
+  // }
   
   // Disconnect socket when wallet disconnects
   useEffect(() => {

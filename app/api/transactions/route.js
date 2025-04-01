@@ -37,51 +37,51 @@ export async function GET(request) {
 }
 
 // POST a new transaction or batch of transactions
-export async function POST(request) {
-  try {
-    const body = await request.json();
+// export async function POST(request) {
+//   try {
+//     const body = await request.json();
     
-    // Handle both single transaction and array of transactions
-    const transactions = Array.isArray(body) ? body : [body];
+//     // Handle both single transaction and array of transactions
+//     const transactions = Array.isArray(body) ? body : [body];
     
-    if (transactions.length === 0) {
-      return NextResponse.json(
-        { error: 'No transactions provided' },
-        { status: 400 }
-      );
-    }
+//     if (transactions.length === 0) {
+//       return NextResponse.json(
+//         { error: 'No transactions provided' },
+//         { status: 400 }
+//       );
+//     }
     
-    // Prepare transactions for insertion
-    const preparedTransactions = transactions.map(tx => ({
-      id: tx.hash, // Use hash as the primary ID
-      hash: tx.hash,
-      from: tx.from.toLowerCase(),
-      to: tx.to ? tx.to.toLowerCase() : null,
-      value: tx.value,
-      timestamp: tx.timestamp,
-      blockNumber: tx.blockNumber,
-      gas: tx.gas,
-      gasPrice: tx.gasPrice,
-      nonce: tx.nonce,
-      status: tx.status,
-    }));
+//     // Prepare transactions for insertion
+//     const preparedTransactions = transactions.map(tx => ({
+//       id: tx.hash, // Use hash as the primary ID
+//       hash: tx.hash,
+//       from: tx.from.toLowerCase(),
+//       to: tx.to ? tx.to.toLowerCase() : null,
+//       value: tx.value,
+//       timestamp: tx.timestamp,
+//       blockNumber: tx.blockNumber,
+//       gas: tx.gas,
+//       gasPrice: tx.gasPrice,
+//       nonce: tx.nonce,
+//       status: tx.status,
+//     }));
     
-    // Use upsert to avoid duplicates (insert if not exists, update if exists)
-    const { data, error } = await supabase
-      .from('transactions')
-      .upsert(preparedTransactions, { onConflict: 'id' });
+//     // Use upsert to avoid duplicates (insert if not exists, update if exists)
+//     const { data, error } = await supabase
+//       .from('transactions')
+//       .upsert(preparedTransactions, { onConflict: 'id' });
     
-    if (error) throw error;
+//     if (error) throw error;
     
-    return NextResponse.json({ 
-      success: true, 
-      message: `${preparedTransactions.length} transaction(s) saved` 
-    });
-  } catch (error) {
-    console.error('Error saving transactions:', error);
-    return NextResponse.json(
-      { error: error.message || 'Failed to save transactions' },
-      { status: 500 }
-    );
-  }
-} 
+//     return NextResponse.json({ 
+//       success: true, 
+//       message: `${preparedTransactions.length} transaction(s) saved` 
+//     });
+//   } catch (error) {
+//     console.error('Error saving transactions:', error);
+//     return NextResponse.json(
+//       { error: error.message || 'Failed to save transactions' },
+//       { status: 500 }
+//     );
+//   }
+// } 
