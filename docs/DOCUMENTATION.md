@@ -2,8 +2,25 @@
 
 ## Project Overview
 
-The Wallet Transaction Viewer is a real-time Ethereum wallet transaction monitoring application built with Next.js and Socket.io. It allows users to connect their wallets and view transaction history with real-time updates without requiring page refreshes.
+The Wallet Transaction Viewer is a real-time Ethereum wallet transaction monitoring application built with Next.js and Socket.io. It allows users to connect their wallets and view transaction history, tag addresses, and store tags in a database. 
 
+## Screenshots
+
+<p align="center">
+  <img src="./images/wallet-connect.png" alt="Wallet Connection Screen" width="600" />
+  <br>
+  <em>Connect Wallet Interface</em>
+</p>
+
+<p align="center">
+  <img src="./images/transaction-list.png" alt="Transaction List" width="600" />
+  <br>
+  <em>Transaction List View</em>
+</p>
+
+To add more screenshots, place your image files in the `docs/images` directory and reference them as shown above.
+
+<!-- 
 ## Table of Contents
 
 1. [Architecture](#architecture)
@@ -15,7 +32,7 @@ The Wallet Transaction Viewer is a real-time Ethereum wallet transaction monitor
 7. [Database Schema](#database-schema)
 8. [API Reference](#api-reference)
 9. [Troubleshooting](#troubleshooting)
-10. [Deployment Guide](#deployment-guide)
+10. [Deployment Guide](#deployment-guide) -->
 
 ## Architecture
 
@@ -46,7 +63,7 @@ The application follows a client-server architecture with real-time communicatio
 - **Frontend**: React/Next.js application with real-time updates via Socket.io-client
 - **Backend**: 
   - Next.js API routes for data fetching
-  - Standalone Socket.io server for real-time communication
+  - Socket.io for real-time communication
 - **External Services**:
   - Etherscan API for historical transaction data
   - Infura for WebSocket connections to the Ethereum network
@@ -56,10 +73,10 @@ The application follows a client-server architecture with real-time communicatio
 
 ### Prerequisites
 
-- Node.js 16+ and npm/pnpm
-- Etherscan API key
-- Infura API key 
-- Supabase account and project
+- Node.js 16+ and pnpm
+- Etherscan API key - Get one from [Etherscan API Dashboard](https://etherscan.io/apidashboard)
+- Infura API key - Get one from [Infura](https://developer.metamask.io/)
+- Supabase account and project - Sign up at [Supabase](https://supabase.com/)
 
 ### Installation Steps
 
@@ -71,15 +88,11 @@ The application follows a client-server architecture with real-time communicatio
 
 2. Install dependencies:
    ```bash
-   npm install
-   # or
    pnpm install
    ```
 
 3. Set up environment variables:
    ```bash
-   npm run create-env
-   # or
    pnpm create-env
    ```
    
@@ -87,19 +100,15 @@ The application follows a client-server architecture with real-time communicatio
 
 4. Start the Socket.io server:
    ```bash
-   npm run socket-server
-   # or
    pnpm socket-server
    ```
 
 5. In a separate terminal, start the Next.js development server:
    ```bash
-   npm run dev
-   # or
-   pnpm dev
+   pnpm run dev
    ```
 
-6. Open http://localhost:3000 in your browser.
+6. Open http://localhost:3001 in your browser.
 
 ## Key Features
 
