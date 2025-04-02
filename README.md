@@ -13,7 +13,7 @@ The Wallet Transaction Viewer is a real-time Ethereum wallet transaction monitor
 </p>
 
 <p align="center">
-  <img src="./Page2.png" alt="Transaction List" width="600" />
+  <img src="./Page2.jpeg" alt="Transaction List" width="600" />
   <br>
   <em>Transaction List View</em>
 </p>
