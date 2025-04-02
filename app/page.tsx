@@ -7,6 +7,7 @@ import WalletConnect from '@/components/WalletConnect'
 import { Transaction, AddressTag } from '@/types'
 import { io } from 'socket.io-client'
 import { SOCKET_EVENTS, socketConfig } from '@/app/socket-config'
+import React from 'react'
 
 export default function Home() {
   const { address, isConnected } = useAccount()
@@ -14,9 +15,89 @@ export default function Home() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [tags, setTags] = useState<AddressTag[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [isTagsLoading, setIsTagsLoading] = useState(false)
   const [socket, setSocket] = useState<any>(null)
   const [connectionStatus, setConnectionStatus] = useState<string>('disconnected')
   const [error, setError] = useState<string | null>(null)
+  
+  // Add a ref to track if we've already tried to fetch tags to prevent infinite loops
+  const hasAttemptedTagsFetch = React.useRef(false)
+  
+  // Add a debounce function for the refresh button
+  const debounce = (fn: Function, ms = 1000) => {
+    let timeoutId: ReturnType<typeof setTimeout>;
+    return function(this: any, ...args: any[]) {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => fn.apply(this, args), ms);
+    };
+  };
+  
+  // Function to fetch address tags from the API
+  const fetchTags = async (forceRefresh = false) => {
+    if (tags.length > 0 && !forceRefresh) {
+      console.log('Using cached tags:', tags.length);
+      return tags;
+    }
+    
+    try {
+      setIsTagsLoading(true);
+      
+      // Use the current URL with port to avoid CORS issues
+      const baseUrl = `${window.location.protocol}//${window.location.hostname}:${window.location.port}`;
+      
+      // IMPORTANT CHANGE: Use the debug/tags endpoint which correctly returns tags
+      // from the database instead of the regular endpoint which returns an empty array
+      const apiUrl = `${baseUrl}/api/debug/tags`;
+      
+      console.log(`Fetching tags from URL: ${apiUrl}`);
+      
+      const response = await fetch(apiUrl);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch tags: ${response.status}`);
+      }
+      
+      const responseData = await response.json();
+      
+      // The debug endpoint returns a different structure, extract the formatted tags
+      let fetchedTags = [];
+      if (responseData.formatted_tags && Array.isArray(responseData.formatted_tags.items)) {
+        console.log(`Found ${responseData.formatted_tags.items.length} tags using debug endpoint`);
+        fetchedTags = responseData.formatted_tags.items;
+      } else if (Array.isArray(responseData)) {
+        // Handle regular endpoint response format for backward compatibility
+        console.log(`Found ${responseData.length} tags using regular endpoint`);
+        fetchedTags = responseData;
+      } else {
+        console.warn('Unexpected tags response format:', responseData);
+        fetchedTags = [];
+      }
+      
+      console.log('Fetched tags:', fetchedTags.length);
+      setTags(fetchedTags);
+      setIsTagsLoading(false);
+      
+      // Expose for debug purposes
+      if (typeof window !== 'undefined') {
+        window.getTagsState = () => [...tags];
+      }
+      
+      return fetchedTags;
+    } catch (error) {
+      console.error('Error fetching tags:', error);
+      setIsTagsLoading(false);
+      return [];
+    }
+  };
+  
+  // Create a debounced version of fetchTags
+  const debouncedFetchTags = React.useCallback(
+    debounce(() => {
+      console.log('Debounced fetchTags called');
+      fetchTags();
+    }, 1000),
+    [fetchTags]  // Include fetchTags in the dependency array
+  );
   
   // Initialize Socket.io connection
   useEffect(() => {
@@ -82,6 +163,7 @@ export default function Home() {
   useEffect(() => {
     if (isConnected && address && socket) {
       setIsLoading(true);
+      setIsTagsLoading(true);
       setError(null);
       
       try {
@@ -106,48 +188,12 @@ export default function Home() {
           console.log(`Received ${data.length} transactions from server`);
           setTransactions(data);
           setIsLoading(false);
-          
-          // Store transactions in Supabase
-          if (data.length > 0) {
-            try {
-              // Use the same URL as the socket connection to ensure we hit the right server
-              const apiUrl = window.location.hostname === 'localhost' 
-                ? `http://${window.location.hostname}:3000/api/transactions`  // Use socket server port
-                : '/api/transactions';  // Production: use relative path
-              
-              await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-              });
-              console.log('Transactions stored in database');
-            } catch (dbError) {
-              console.error('Failed to store transactions in database:', dbError);
-            }
-          }
         });
         
         // Listen for new transactions
         socket.on(SOCKET_EVENTS.NEW_TRANSACTION, async (newTransaction: Transaction) => {
           console.log('Received new transaction:', newTransaction.hash);
           setTransactions(prev => [newTransaction, ...prev]);
-          
-          // Store new transaction in Supabase
-          try {
-            // Use the same URL as the socket connection to ensure we hit the right server
-            const apiUrl = window.location.hostname === 'localhost' 
-              ? `http://${window.location.hostname}:3000/api/transactions`  // Use socket server port
-              : '/api/transactions';  // Production: use relative path
-            
-            await fetch(apiUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(newTransaction)
-            });
-            console.log('New transaction stored in database');
-          } catch (dbError) {
-            console.error('Failed to store new transaction in database:', dbError);
-          }
         });
         
         // Handle connection errors
@@ -161,12 +207,7 @@ export default function Home() {
           console.log('Socket reconnected, resending wallet address');
           socket.emit(SOCKET_EVENTS.WALLET_CONNECT, address);
         });
-        
-        // Fetch transactions from Supabase
-        fetchStoredTransactions();
-        
-        // Fetch tags
-        fetchTags();
+
       } catch (err) {
         console.error('Error in wallet connection effect:', err);
         setError(`Connection error: ${err instanceof Error ? err.message : String(err)}`);
@@ -186,35 +227,6 @@ export default function Home() {
     
   }, [isConnected, address, socket]);
   
-  // Fetch transactions stored in Supabase
-  const fetchStoredTransactions = async () => {
-    if (!address) return;
-    
-    try {
-      setIsLoading(true);
-      console.log('Fetching stored transactions for address:', address);
-      
-      const response = await fetch(`/api/transactions?address=${address}`);
-      if (!response.ok) {
-        throw new Error('Failed to fetch stored transactions');
-      }
-      
-      const data = await response.json();
-      console.log(`Fetched ${data.length} stored transactions from database`);
-      
-      if (data.length > 0) {
-        // Only update state if we got transactions and no socket transactions yet
-        if (transactions.length === 0) {
-          setTransactions(data);
-        }
-        setIsLoading(false);
-      }
-    } catch (error) {
-      console.error('Error fetching stored transactions:', error);
-      // Don't set error state here as we might still get transactions from socket
-    }
-  }
-  
   // Disconnect socket when wallet disconnects
   useEffect(() => {
     if (!isConnected && socket) {
@@ -222,36 +234,6 @@ export default function Home() {
       socket.emit(SOCKET_EVENTS.WALLET_DISCONNECT);
     }
   }, [isConnected, socket]);
-  
-  const fetchTags = async () => {
-    try {
-      console.log('Fetching tags for address:', address);
-      const response = await fetch(`/api/tags?address=${address}`)
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to fetch tags');
-      }
-      
-      const data = await response.json()
-      console.log(`Fetched ${data.length} tags`);
-      
-      // Format tags to match our expected format if needed
-      const formattedTags: AddressTag[] = data.map((tag: any) => ({
-        id: tag.id,
-        address: tag.address,
-        tag: tag.tag,
-        created_by: tag.created_by,
-        signature: tag.signature,
-        created_at: tag.created_at
-      }));
-      
-      setTags(formattedTags)
-    } catch (error) {
-      console.error('Failed to fetch address tags:', error)
-      setError(`Failed to fetch tags: ${error instanceof Error ? error.message : String(error)}`)
-    }
-  }
   
   const testWebSocket = () => {
     console.log('Testing direct WebSocket connection...');
@@ -279,6 +261,56 @@ export default function Home() {
       console.log('Direct WebSocket connection closed');
     };
   };
+  
+  // Fix the useEffect to avoid infinite loops
+  useEffect(() => {
+    // Only attempt to fetch tags once when connected
+    if (isConnected && address && tags.length === 0 && !isTagsLoading && !hasAttemptedTagsFetch.current) {
+      console.log('Connected with no tags, fetching tags (first attempt)...');
+      hasAttemptedTagsFetch.current = true;
+      fetchTags();
+    }
+  }, [isConnected, address, isTagsLoading, tags.length, fetchTags]); // Include fetchTags and tags.length
+  
+  // Add debug logging and expose function to window
+  useEffect(() => {
+    
+    // Expose the fetch tags function
+    window.testFetchTags = (force = false) => {
+      console.log(`🔍 Manually calling fetchTags(${force})...`);
+      return fetchTags(force)
+        .then(() => {
+          console.log('✅ fetchTags completed successfully');
+          console.log(`📊 Current tags state (${tags.length} tags):`, tags);
+          return tags;
+        })
+        .catch(err => {
+          console.error('❌ fetchTags failed:', err);
+          throw err;
+        });
+    };
+    
+    // Expose a function to check the current state
+    window.getTagsState = () => {
+      console.log(`📊 Current tags state (${tags.length} tags):`, tags);
+      return tags;
+    };
+    
+    window.checkTagsStatus = () => {
+      console.log({
+        tagsCount: tags.length,
+        isTagsLoading,
+        hasAttemptedFetch: hasAttemptedTagsFetch.current
+      });
+    };
+    
+    
+    return () => {
+      delete window.testFetchTags;
+      delete window.getTagsState;
+      delete window.checkTagsStatus;
+    };
+  }, [fetchTags, tags, isTagsLoading]);
   
   return (
     <div className="flex flex-col min-h-screen bg-[#0a051d] text-white relative" style={{ margin: 0, padding: 0, backgroundImage: 'radial-gradient(circle at 25% 10%, rgba(120, 40, 200, 0.15) 0%, transparent 45%)' }}>
@@ -394,20 +426,13 @@ export default function Home() {
                       `Loaded ${transactions.length} transactions`
                     }
                   </div>
-                  
-                  <button 
-                    onClick={testWebSocket}
-                    className="p-2 bg-purple-800/50 hover:bg-purple-700/50 text-white rounded-lg text-sm transition-colors"
-                  >
-                    Test WebSocket Connection
-                  </button>
                 </div>
               </div>
             </div>
             
             <TransactionList 
               transactions={transactions} 
-              isLoading={isLoading} 
+              isLoading={isLoading || isTagsLoading}
               tags={tags}
               setTags={setTags}
             />
@@ -425,9 +450,12 @@ export default function Home() {
   )
 }
 
-// Add TypeScript augmentation for the Window interface
+// Update your existing global Window interface augmentation
 declare global {
   interface Window {
-    transactionSocket?: WebSocket
+    transactionSocket?: WebSocket;
+    testFetchTags?: (force?: boolean) => Promise<AddressTag[]>;
+    getTagsState?: () => AddressTag[];
+    checkTagsStatus?: () => void;
   }
 }
