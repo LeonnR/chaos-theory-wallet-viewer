@@ -67,8 +67,8 @@ The application follows a client-server architecture with real-time communicatio
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/wallet-transaction-viewer.git
-   cd wallet-transaction-viewer
+   git clone https://github.com/LeonnR/chaos-theory-wallet-viewer.git
+   cd chaos-theory-wallet-viewer
    ```
 
 2. Install dependencies:
@@ -92,7 +92,7 @@ The application follows a client-server architecture with real-time communicatio
     SUPABASE_URL=your_supabase_url
     SUPABASE_ANON_KEY=your_supabase_anon_key
     NEXT_PUBLIC_APP_URL=your_app_url
-```
+   ```
 
 4. Run SQL to create the tags table on Supabase SQL Editor:
     ```sql
